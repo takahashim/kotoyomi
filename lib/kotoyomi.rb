@@ -1,6 +1,12 @@
 require "js"
 
 module Kotoyomi
+  # アプリ層で発生する想定済みエラーの基底クラス。
+  class Error < StandardError; end
+
+  # 字幕トラック (`<track>`) のロード失敗。
+  class TrackLoadError < Error; end
+
   # TS から呼ぶための薄い委譲。ロジック本体は App#start に置く。
   def self.start
     App.new.start
@@ -26,7 +32,7 @@ module Kotoyomi
 
       @reset_btn.on(:click) { @audio[:currentTime] = 0 }
       @audio[:currentTime] = 0
-    rescue => e
+    rescue Error => e
       report_error(e)
       raise
     end
@@ -36,7 +42,7 @@ module Kotoyomi
     def wait_for_track_load
       ready = @track_el[:readyState].to_i
       return if ready == 2
-      raise "track load error" if ready == 3
+      raise TrackLoadError, "track load error" if ready == 3
 
       JS.eval(<<~JS).await
         return new Promise((resolve, reject) => {
@@ -45,6 +51,8 @@ module Kotoyomi
           el.addEventListener("error", () => reject(new Error("track load error")), { once: true });
         });
       JS
+    rescue JS::Error => e
+      raise TrackLoadError, e.message
     end
 
     def report_error(e)
