@@ -1,0 +1,62 @@
+html,
+body {
+  margin: 0;
+  padding: 0;
+  background: #faf7f2;
+  color: #222;
+  font-family: "Hiragino Mincho ProN", "Yu Mincho", serif;
+}
+
+.app {
+  display: flex;
+  flex-direction: column;
+  gap: 1rem;
+  padding: 1rem;
+  min-height: 100vh;
+  box-sizing: border-box;
+}
+
+.poem-viewport {
+  height: 80vh;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: #fffdf8;
+  border: 1px solid #e6e0d4;
+  overflow: hidden;
+}
+
+.poem {
+  writing-mode: vertical-rl;
+  text-orientation: mixed;
+  line-height: 2.2;
+  font-size: 28px;
+  letter-spacing: 0.08em;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.line {
+  display: none;
+  margin: 0;
+  text-align: center;
+}
+
+.line.active {
+  display: block;
+  font-weight: 600;
+}
+
+audio {
+  width: 100%;
+}
+
+.error {
+  color: #b00020;
+  background: #fff0f0;
+  border: 1px solid #f3c5c5;
+  padding: 0.75rem 1rem;
+  margin: 0;
+  white-space: pre-wrap;
+}
