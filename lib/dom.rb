@@ -20,22 +20,22 @@ module Kotoyomi
     #   end
     #
     # 特殊キー: :id, :class, :text, :html, :data
-    # それ以外のキーは el[key] = value にフォールバック。
+    # それ以外のキーは elm[key] = value にフォールバック。
     def self.create(tag, **attrs)
-      el = Element.new(DOCUMENT.createElement(tag.to_s))
-      attrs.each { |key, value| apply_attr(el, key, value) }
-      yield el if block_given?
-      el
+      elm = Element.new(DOCUMENT.createElement(tag.to_s))
+      attrs.each { |key, value| apply_attr(elm, key, value) }
+      yield elm if block_given?
+      elm
     end
 
-    def self.apply_attr(el, key, value)
+    def self.apply_attr(elm, key, value)
       case key
-      when :id    then el.id = value
-      when :class then el.class_name = value
-      when :text  then el.text = value
-      when :html  then el.html = value
-      when :data  then value.each { |k, v| el.dataset(k, v) }
-      else             el[key] = value
+      when :id    then elm.id = value
+      when :class then elm.class_name = value
+      when :text  then elm.text = value
+      when :html  then elm.html = value
+      when :data  then value.each { |k, v| elm.dataset(k, v) }
+      else             elm[key] = value
       end
     end
     private_class_method :apply_attr
@@ -115,8 +115,8 @@ module Kotoyomi
     end
 
     # イベント購読 (ブロックが JS コールバックとして渡る)
-    def on(event, &block)
-      @node.addEventListener(event.to_s, &block)
+    def on(event, &)
+      @node.addEventListener(event.to_s, &)
       self
     end
   end

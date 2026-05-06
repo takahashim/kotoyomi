@@ -19,6 +19,7 @@ module Kotoyomi
     def update
       active = @track[:activeCues]
       return if active.nil?
+
       next_index = active[:length].to_i > 0 ? find_index(active[0]) : -1
       return if next_index == @current_index
 

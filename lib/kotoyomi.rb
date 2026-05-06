@@ -32,8 +32,8 @@ module Kotoyomi
 
       @reset_btn.on(:click) { @audio[:currentTime] = 0 }
       @audio[:currentTime] = 0
-    rescue Error => e
-      report_error(e)
+    rescue Error => err
+      report_error(err)
       raise
     end
 
@@ -51,13 +51,13 @@ module Kotoyomi
           el.addEventListener("error", () => reject(new Error("track load error")), { once: true });
         });
       JS
-    rescue JS::Error => e
-      raise TrackLoadError, e.message
+    rescue JS::Error => err
+      raise TrackLoadError, err.message
     end
 
-    def report_error(e)
-      JS.global[:console].error(e.message)
-      @error_el.text = "起動に失敗しました。\n#{e.message}"
+    def report_error(err)
+      JS.global[:console].error(err.message)
+      @error_el.text = "起動に失敗しました。\n#{err.message}"
       @error_el.show
     end
   end
