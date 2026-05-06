@@ -51,6 +51,16 @@ body {
   align-items: center;
   gap: 0.4em;
   font-weight: 600;
+  animation: stanza-fade-in 2.0s ease-out;
+}
+
+@keyframes stanza-fade-in {
+  from {
+    opacity: 0;
+  }
+  to {
+    opacity: 1;
+  }
 }
 
 .stanza-line {
