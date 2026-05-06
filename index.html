@@ -12,7 +12,9 @@
         <div id="poem" class="poem"></div>
       </section>
 
-      <audio id="audio" controls></audio>
+      <audio id="audio" controls crossorigin="anonymous">
+        <track id="track" kind="metadata" src="poems/sample.vtt" default />
+      </audio>
 
       <p id="error" class="error" hidden></p>
     </main>

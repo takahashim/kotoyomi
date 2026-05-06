@@ -1,11 +1,5 @@
-export type PoemStanza = {
+export type Cue = {
   id: string;
-  time: number;
-  lines: string[];
-};
-
-export type PoemDocument = {
-  title?: string;
-  audioSrc: string;
-  stanzas: PoemStanza[];
+  startTime: number;
+  text: string;
 };

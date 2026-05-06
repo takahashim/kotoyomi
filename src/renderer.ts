@@ -1,16 +1,16 @@
-import type { PoemStanza } from "./types.ts";
+import type { Cue } from "./types.ts";
 
-export function renderPoem(stanzas: PoemStanza[], container: HTMLElement): HTMLElement[] {
+export function renderPoem(cues: Cue[], container: HTMLElement): HTMLElement[] {
   container.replaceChildren();
 
   const elements: HTMLElement[] = [];
-  for (const stanza of stanzas) {
+  cues.forEach((cue, i) => {
     const div = document.createElement("div");
-    div.id = stanza.id;
+    div.id = cue.id || `stanza-${i + 1}`;
     div.className = "stanza";
-    div.dataset.time = String(stanza.time);
+    div.dataset.startTime = String(cue.startTime);
 
-    for (const line of stanza.lines) {
+    for (const line of cue.text.split("\n")) {
       const p = document.createElement("p");
       p.className = "stanza-line";
       p.textContent = line;
@@ -19,6 +19,6 @@ export function renderPoem(stanzas: PoemStanza[], container: HTMLElement): HTMLE
 
     container.appendChild(div);
     elements.push(div);
-  }
+  });
   return elements;
 }

@@ -1,6 +1,10 @@
 # Kotoyomi
 
-縦書きで詩本文を表示し、朗読音声と同期して現在行をハイライト・スクロールするスタンドアローンなWebプレイヤー。
+縦書きで詩本文を表示し、朗読音声と同期して現在の連をハイライトするスタンドアローンなWebプレイヤー。
+
+詩テキストは [WebVTT](https://developer.mozilla.org/ja/docs/Web/API/WebVTT_API)
+を採用し、ブラウザ標準の `<track kind="metadata">`
+でロード・パース・同期する。自前のパーサ／プレイヤーループは持たない。
 
 詳細仕様は [`spec.md`](./spec.md) を参照。
 
@@ -12,7 +16,6 @@
 
 ```bash
 deno task check     # 型チェック
-deno task test      # テスト実行
 deno task lint      # Lint
 deno task fmt       # フォーマット
 deno task serve     # ローカルWebサーバー起動 (デフォルト http://localhost:8000/)
@@ -23,44 +26,33 @@ deno task build     # src/main.ts を dist/app.js にバンドル
 
 1. `deno task build` でブラウザ用のJSをバンドル。
 2. `deno task serve` を実行し、ブラウザで `http://localhost:8000/` を開く。
-3. `<audio>` の再生ボタンを押すと、詩の現在行がハイライトされ縦書き表示がスクロールします。
+3. `<audio>` の再生ボタンを押すと、現在の連が中央でハイライトされます。
 
-サンプル朗読音声 (`poems/sample.mp3`) と詩テキスト (`poems/sample.poem`) は同梱されています。
+サンプル朗読音声 (`poems/sample.mp3`) と WebVTT 字幕 (`poems/sample.vtt`) は同梱されています。
 
 ## 配布物
 
 `deno task build` で生成した `dist/app.js` と、ルートの `index.html` / `app.css` / `poems/`
 を任意の静的Webサーバーに配置すれば動作します。
 
-## CLI ツール
-
-```bash
-deno run --allow-read tools/validate_poem.ts poems/sample.poem
-```
-
-詩テキストをパースして JSON を標準出力に書き出します。形式不正の場合は exit code 1。
-
 ## 詩テキスト形式
 
-時刻マーカーは行頭に単独で記述し、その直後に本文行を 1 つ以上続ける。空行・次のマーカー・EOF
-のいずれかで連を終端する。
+[WebVTT](https://www.w3.org/TR/webvtt1/) 準拠。各 cue が 1 つの連に対応する。cue 識別子を付けると
+DOM の `id` として再利用される。
 
 ```
-[mm:ss.mmm]
-本文
-[本文...]
-```
+WEBVTT
 
-例:
-
-```
-[00:00.000]
+stanza-1
+00:00.000 --> 00:08.600
 春の夜に
 静かに雨が降る
 
-[00:08.600]
+stanza-2
+00:08.600 --> 00:13.244
 遠い灯りが
 川面に揺れている
 ```
 
-詳細は [`spec.md`](./spec.md) §5 を参照。
+cue 本文の各行は `<p class="stanza-line">` として `<div class="stanza">` 内に配置され、CSS
+の縦書き設定によって右から左へ並ぶ。

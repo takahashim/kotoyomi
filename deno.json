@@ -1,7 +1,6 @@
 {
   "tasks": {
-    "check": "deno check src/main.ts src/parser.ts src/validator.ts src/renderer.ts src/player.ts tools/validate_poem.ts",
-    "test": "deno test --allow-read src/__tests__/",
+    "check": "deno check src/main.ts src/types.ts src/renderer.ts src/player.ts",
     "lint": "deno lint",
     "fmt": "deno fmt",
     "fmt:check": "deno fmt --check",
