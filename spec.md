@@ -369,11 +369,11 @@ end
 
 ### 12.1 ローカル動作確認
 
-ビルドステップは存在しない。Ruby 標準の WEBrick を使った簡易サーバで起動する (Ruby 3.0+ では `webrick` gem の追加インストールが必要)。
+ビルドステップは存在しない。`Gemfile` で [wsv](https://github.com/takahashim/wsv) (Ruby 標準ライブラリのみで動く軽量静的サーバ) を依存に持ち、設定ファイルなしで起動できる。
 
 ```bash
-gem install webrick           # 初回のみ
-ruby -run -e httpd -- -p 8000 .
+bundle install                # 初回のみ
+bundle exec wsv
 ```
 
 ブラウザで `http://localhost:8000/` を開けばそのまま動く。任意の他の静的サーバ (Python の `python3 -m http.server` 等) でも代替可。

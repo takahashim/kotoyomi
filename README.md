@@ -21,14 +21,16 @@
 ## 要件
 
 - 実行時にブラウザが jsDelivr CDN へアクセスできること（ruby.wasm 配布物を取得するため）
-- ローカル動作確認用に Ruby (3.x)、および `webrick` gem (Ruby 3.0+ で stdlib から外れているため)
+- ローカル動作確認: Ruby + Bundler
 
 ## ローカルでの動作確認
 
 ```bash
-gem install webrick           # 初回のみ
-ruby -run -e httpd -- -p 8000 .
+bundle install                # 初回のみ
+bundle exec wsv
 ```
+
+[wsv](https://github.com/takahashim/wsv) を使った静的配信です。`Gemfile` に定義してあり、設定ファイル不要、デフォルトで `127.0.0.1:8000` で起動します。
 
 ブラウザで `http://localhost:8000/` を開くと:
 
