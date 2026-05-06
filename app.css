@@ -59,6 +59,30 @@ audio {
   width: 100%;
 }
 
+.controls {
+  display: flex;
+  justify-content: center;
+}
+
+.controls button {
+  font: inherit;
+  padding: 0.5rem 1.25rem;
+  border: 1px solid #c8bfae;
+  background: #fffdf8;
+  color: #222;
+  border-radius: 4px;
+  cursor: pointer;
+  transition: background 0.15s ease;
+}
+
+.controls button:hover {
+  background: #f3eddf;
+}
+
+.controls button:active {
+  background: #e8dfca;
+}
+
 .error {
   color: #b00020;
   background: #fff0f0;

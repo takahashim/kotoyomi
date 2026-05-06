@@ -18,6 +18,11 @@ async function main(): Promise<void> {
 
   audio.src = AUDIO_URL;
 
+  const resetBtn = document.getElementById("reset") as HTMLButtonElement | null;
+  resetBtn?.addEventListener("click", () => {
+    audio.currentTime = 0;
+  });
+
   const engine = new URLSearchParams(globalThis.location.search).get("engine") ?? "ts";
 
   try {
