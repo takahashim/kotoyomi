@@ -22,13 +22,9 @@ module Kotoyomi
       next_index = active[:length].to_i > 0 ? find_index(active[0]) : -1
       return if next_index == @current_index
 
-      if @current_index >= 0
-        @elements[@current_index][:classList].remove("active")
-      end
+      @elements[@current_index].remove_class("active") if @current_index >= 0
       @current_index = next_index
-      if next_index >= 0
-        @elements[next_index][:classList].add("active")
-      end
+      @elements[next_index].add_class("active") if next_index >= 0
     end
 
     def find_index(cue)

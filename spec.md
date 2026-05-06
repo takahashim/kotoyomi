@@ -64,6 +64,7 @@ kotoyomi/
     ruby_runtime.ts    ← ruby.wasm の VM 起動と Kotoyomi.start 呼び出し
 
   lib/
+    dom.rb             ← DOM 操作ラッパー (Kotoyomi::DOM, Kotoyomi::Element)
     kotoyomi.rb        ← アプリのエントリポイント (Kotoyomi::App)
     renderer.rb        ← DOM 生成 (Kotoyomi::Renderer)
     player.rb          ← cuechange ハンドリング・ハイライト (Kotoyomi::Player)
@@ -124,7 +125,7 @@ export async function bootRuby(): Promise<void>;
 - `@ruby/wasm-wasi` の `DefaultRubyVM` を CDN (jsDelivr) から動的 import する。
 - `@ruby/3.4-wasm-wasi/dist/ruby+stdlib.wasm` を fetch + `WebAssembly.compileStreaming`。
 - Ruby VM を起動。
-- `lib/*.rb` を順序付き (renderer → player → kotoyomi) に fetch して `vm.eval` で評価。
+- `lib/*.rb` を順序付き (dom → renderer → player → kotoyomi) に fetch して `vm.eval` で評価。
 - `vm.evalAsync("Kotoyomi.start")` で Ruby に制御を渡す (`evalAsync` は Ruby 内 `Promise#await` を許容する)。
 
 TS↔Ruby 界面は `Kotoyomi.start` の 1 関数呼び出しのみ。Renderer / Player / App のクラス名は TS から見えない。
@@ -149,9 +150,34 @@ TS↔Ruby 界面は `Kotoyomi.start` の 1 関数呼び出しのみ。Renderer /
 
 - `@ruby/3.4-wasm-wasi` v2.x (CRuby 3.4 + WASI) を採用。
 - jsDelivr CDN から ESM とWASMを動的取得する (vendor 化は将来検討)。
-- ブラウザにおける `js` gem (`require "js"`) を介して DOM を直接操作する。
+- ブラウザにおける `js` gem (`require "js"`) を介して DOM を操作する。素の JS::Object 操作は `Kotoyomi::DOM` モジュールと `Kotoyomi::Element` ラッパーで覆って隠す。
 
-### 8.2 `lib/kotoyomi.rb`
+### 8.2 `lib/dom.rb`
+
+DOM 操作の薄いラッパー。`DOM[id]` で要素取得、`DOM.create(tag, **attrs) { |el| ... }` でハッシュ属性 + 子要素ブロックでの構築、`Element#append` `#add_class` `#remove_class` `#text=` `#on(:click) { ... }` などのメソッドを提供する。完全な隠蔽はせず、`Element#native` で素の JS::Object も取り出せる。
+
+```ruby
+module Kotoyomi
+  module DOM
+    def self.[](id)                    # getElementById → Element
+    def self.create(tag, **attrs, &block)  # createElement + 属性 + 子要素
+  end
+
+  class Element
+    def native; end
+    def [](key); end
+    def []=(key, value); end
+    def id=; class_name=; text=; html=; end
+    def dataset(key, value); end
+    def append(child); clear; end
+    def add_class(name); remove_class(name); end
+    def show; hide; end
+    def on(event, &block); end
+  end
+end
+```
+
+### 8.3 `lib/kotoyomi.rb`
 
 アプリのエントリポイント。TS が呼ぶ `Kotoyomi.start` は `Kotoyomi::App.new.start` への薄い委譲で、実体は `App` クラスのインスタンスメソッドが持つ。
 
@@ -184,30 +210,38 @@ end
 
 責務: DOM 取得、トラック lifecycle 待機、Renderer/Player のオーケストレーション、UI イベント (reset ボタン)、初期表示確定、エラーハンドリング。`Promise#await` を使うため `vm.evalAsync` で呼び出される。
 
-### 8.3 `lib/renderer.rb`
+### 8.4 `lib/renderer.rb`
+
+`DOM.create` (ハッシュ属性 + 子要素ブロック) を使って 1 連分の `<div class="stanza">` を構築する。
 
 ```ruby
 module Kotoyomi
   class Renderer
     def initialize(cues, container)
-      # @cues, @container, @document を保持
+      @cues = cues
+      @container = container
     end
 
     def render
-      # 各 cue から <div class="stanza"><p class="stanza-line">...</p></div> を生成
-      # 生成した連要素の JS::Array を返す
+      # 各 cue から build_stanza で Element を生成、container に append、Array<Element> を返す
     end
 
     private
 
-    def build_stanza(cue, index)  # 1 連分の DOM 生成
+    def build_stanza(cue, index)
+      DOM.create(:div, id: ..., class: "stanza", data: { startTime: ... }) do |div|
+        cue[:text].to_s.split("\n").each do |line|
+          div.append(DOM.create(:p, class: "stanza-line", text: line))
+        end
+      end
+    end
   end
 end
 ```
 
 `textContent` 経由で本文を挿入し、XSS対策を維持する。1 連分の生成は `build_stanza` に切り出し、`render` は反復のみに専念。
 
-### 8.4 `lib/player.rb`
+### 8.5 `lib/player.rb`
 
 ```ruby
 module Kotoyomi
@@ -222,7 +256,7 @@ end
 
 `cuechange` イベントだけで動作する。現在の cue 特定は `cue.startTime` を用いた線形探索 (`js` gem で `Function.prototype.call` 越しの indexOf を呼ぶより素直なため)。
 
-### 8.5 ランタイム互換性
+### 8.6 ランタイム互換性
 
 将来的に [mruby](https://mruby.org/) や [PicoRuby](https://github.com/picoruby/picoruby) の WASM ビルドへ置き換える可能性がある。`js` gem は CRuby 固有なので置き換え時には JS interop 層の書き換えが発生する。Ruby 側コードは標準的な構文に留め、移行時の差分が読みやすい状態を保つ。
 

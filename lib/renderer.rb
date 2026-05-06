@@ -5,36 +5,27 @@ module Kotoyomi
     def initialize(cues, container)
       @cues = cues
       @container = container
-      @document = JS.global[:document]
     end
 
+    # 連ごとの Element を生成・追加し、Element の配列を返す。
     def render
-      @container[:innerHTML] = ""
-      elements = JS.eval("return [];")
-      @cues[:length].to_i.times do |i|
-        elements.push(build_stanza(@cues[i], i))
-      end
-      elements
+      @container.clear
+      stanzas = @cues[:length].to_i.times.map { |i| build_stanza(@cues[i], i) }
+      stanzas.each { |stanza| @container.append(stanza) }
+      stanzas
     end
 
     private
 
     def build_stanza(cue, index)
-      div = @document.createElement("div")
       cue_id = cue[:id].to_s
-      div[:id] = cue_id.empty? ? "stanza-#{index + 1}" : cue_id
-      div[:className] = "stanza"
-      div[:dataset][:startTime] = cue[:startTime].to_s
+      stanza_id = cue_id.empty? ? "stanza-#{index + 1}" : cue_id
 
-      cue[:text].to_s.split("\n").each do |line|
-        p = @document.createElement("p")
-        p[:className] = "stanza-line"
-        p[:textContent] = line
-        div.appendChild(p)
+      DOM.create(:div, id: stanza_id, class: "stanza", data: { startTime: cue[:startTime] }) do |div|
+        cue[:text].to_s.split("\n").each do |line|
+          div.append(DOM.create(:p, class: "stanza-line", text: line))
+        end
       end
-
-      @container.appendChild(div)
-      div
     end
   end
 end

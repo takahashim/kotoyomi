@@ -8,12 +8,11 @@ module Kotoyomi
 
   class App
     def initialize
-      document = JS.global[:document]
-      @audio = document.getElementById("audio")
-      @track_el = document.getElementById("track")
-      @poem = document.getElementById("poem")
-      @error_el = document.getElementById("error")
-      @reset_btn = document.getElementById("reset")
+      @audio     = DOM["audio"]
+      @track_el  = DOM["track"]
+      @poem      = DOM["poem"]
+      @error_el  = DOM["error"]
+      @reset_btn = DOM["reset"]
     end
 
     def start
@@ -25,7 +24,7 @@ module Kotoyomi
       elements = Renderer.new(cues, @poem).render
       Player.new(track, elements)
 
-      @reset_btn.addEventListener("click") { @audio[:currentTime] = 0 }
+      @reset_btn.on(:click) { @audio[:currentTime] = 0 }
       @audio[:currentTime] = 0
     rescue => e
       report_error(e)
@@ -50,8 +49,8 @@ module Kotoyomi
 
     def report_error(e)
       JS.global[:console].error(e.message)
-      @error_el[:textContent] = "起動に失敗しました。\n#{e.message}"
-      @error_el[:hidden] = false
+      @error_el.text = "起動に失敗しました。\n#{e.message}"
+      @error_el.show
     end
   end
 end
