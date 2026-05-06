@@ -1,69 +1,26 @@
-import type { Cue } from "./types.ts";
 import { startRubyEngine } from "./ruby_engine.ts";
 
-const AUDIO_URL = "poems/sample.mp3";
-
 async function main(): Promise<void> {
-  const audio = document.getElementById("audio") as HTMLAudioElement | null;
-  const trackEl = document.getElementById("track") as HTMLTrackElement | null;
-  const poemContainer = document.getElementById("poem") as HTMLElement | null;
-  const errorEl = document.getElementById("error") as HTMLElement | null;
+  const audio = document.getElementById("audio") as HTMLAudioElement;
+  const trackEl = document.getElementById("track") as HTMLTrackElement;
+  const poem = document.getElementById("poem") as HTMLElement;
+  const errorEl = document.getElementById("error") as HTMLElement;
+  const resetBtn = document.getElementById("reset") as HTMLButtonElement;
 
-  if (!audio || !trackEl || !poemContainer || !errorEl) {
-    console.error("必要なDOM要素が見つかりません。");
-    return;
-  }
-
-  audio.src = AUDIO_URL;
-
-  const resetBtn = document.getElementById("reset") as HTMLButtonElement | null;
-  resetBtn?.addEventListener("click", () => {
+  resetBtn.addEventListener("click", () => {
     audio.currentTime = 0;
   });
 
   try {
-    const track = trackEl.track;
-    track.mode = "hidden";
-    await waitForTrackLoad(trackEl);
-    const cues = track.cues ? Array.from(track.cues) as VTTCue[] : [];
-    const cueData = cues.map(toCue);
-
-    await startRubyEngine({ track, cues: cueData, container: poemContainer });
-    // Player 構築直後は activeCues が空のことがあるので、明示的に冒頭へ seek して
-    // 「最初に戻る」を押した状態と同じ初期表示にする。
+    await startRubyEngine({ trackEl, container: poem });
     audio.currentTime = 0;
   } catch (err) {
     console.error(err);
-    errorEl.textContent = `Ruby エンジンの起動に失敗しました。\n${
+    errorEl.textContent = `起動に失敗しました。\n${
       err instanceof Error ? err.message : String(err)
     }`;
     errorEl.hidden = false;
   }
-}
-
-function waitForTrackLoad(trackEl: HTMLTrackElement): Promise<void> {
-  if (trackEl.readyState === 2) return Promise.resolve();
-  if (trackEl.readyState === 3) return Promise.reject(new Error("track load error"));
-  return new Promise<void>((resolve, reject) => {
-    const onLoad = (): void => {
-      cleanup();
-      resolve();
-    };
-    const onError = (): void => {
-      cleanup();
-      reject(new Error("track load error"));
-    };
-    const cleanup = (): void => {
-      trackEl.removeEventListener("load", onLoad);
-      trackEl.removeEventListener("error", onError);
-    };
-    trackEl.addEventListener("load", onLoad);
-    trackEl.addEventListener("error", onError);
-  });
-}
-
-function toCue(cue: VTTCue): Cue {
-  return { id: cue.id, startTime: cue.startTime, text: cue.text };
 }
 
 if (document.readyState === "loading") {
