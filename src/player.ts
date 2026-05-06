@@ -1,25 +1,25 @@
-import type { PoemLine } from "./types.ts";
+import type { PoemStanza } from "./types.ts";
 
 export type PoemPlayerParams = {
   audio: HTMLAudioElement;
-  lines: PoemLine[];
+  stanzas: PoemStanza[];
   elements: HTMLElement[];
 };
 
 export class PoemPlayer {
   private readonly audio: HTMLAudioElement;
-  private readonly lines: PoemLine[];
+  private readonly stanzas: PoemStanza[];
   private readonly elements: HTMLElement[];
   private rafId: number | null = null;
   private currentIndex = -1;
   private disposed = false;
 
   constructor(params: PoemPlayerParams) {
-    if (params.lines.length !== params.elements.length) {
-      throw new Error("lines と elements の数が一致しません。");
+    if (params.stanzas.length !== params.elements.length) {
+      throw new Error("stanzas と elements の数が一致しません。");
     }
     this.audio = params.audio;
-    this.lines = params.lines;
+    this.stanzas = params.stanzas;
     this.elements = params.elements;
 
     this.audio.addEventListener("play", this.onPlay);
@@ -82,14 +82,14 @@ export class PoemPlayer {
   }
 
   private findIndex(currentTime: number): number {
-    if (this.lines.length === 0) return -1;
-    if (currentTime < this.lines[0].time) return -1;
+    if (this.stanzas.length === 0) return -1;
+    if (currentTime < this.stanzas[0].time) return -1;
 
     let lo = 0;
-    let hi = this.lines.length - 1;
+    let hi = this.stanzas.length - 1;
     while (lo < hi) {
       const mid = (lo + hi + 1) >>> 1;
-      if (this.lines[mid].time <= currentTime) {
+      if (this.stanzas[mid].time <= currentTime) {
         lo = mid;
       } else {
         hi = mid - 1;

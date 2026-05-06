@@ -26,7 +26,7 @@
 - 音声再生制御
 - `audio.currentTime` に基づく現在位置の判定
 - 詩本文のDOM生成
-- 現在行のハイライト
+- 現在の連のハイライト
 - 縦書き表示のスクロール制御
 - 再生・停止・シークなどのUI制御
 - 初期段階での詩テキストパース
@@ -51,7 +51,7 @@ Ruby側はDOM操作や音声制御を担当しない。
         ↓
 Deno / TypeScript パーサ
         ↓
-PoemLine[] データ
+PoemStanza[] データ
         ↓
 TypeScript プレイヤー
         ↓
@@ -69,7 +69,7 @@ JSON
         ↓
 TypeScript 側で実行時検証
         ↓
-PoemLine[] データ
+PoemStanza[] データ
         ↓
 TypeScript プレイヤー
         ↓
@@ -120,13 +120,16 @@ poem-player/
 
 詩テキストには、朗読音声との同期に用いる時刻マーカーを記述できる。
 
-基本形式は以下とする。
+基本形式は以下とする。時刻マーカーは行頭に単独で記述し、その直後に本文行を 1 つ以上続ける。空行・次のマーカー・EOF のいずれかで 1 つの連を終端する。
 
 ```text
-[00:00.000] 春の夜に
-[00:04.200] 静かに雨が降る
-[00:08.600] 遠い灯りが
-[00:11.300] 川面に揺れている
+[00:00.000]
+春の夜に
+静かに雨が降る
+
+[00:08.600]
+遠い灯りが
+川面に揺れている
 ```
 
 ### 5.2 時刻マーカー
@@ -147,50 +150,25 @@ poem-player/
 
 ### 5.3 パース規則
 
-- 1つの同期単位につき、1つの時刻マーカーを持つ。
-- 時刻マーカーは行頭に記述する。
-- 時刻マーカーの後ろに本文を記述する。
-- 空行は無視する。
+- 1 つの同期単位 (連) につき、1 つの時刻マーカーを持つ。
+- 時刻マーカーは行頭に単独で記述する。マーカー行に本文を含めることはできない。
+- マーカー行の直後に本文行を 1 つ以上続ける。
+- 空行・次のマーカー・EOF のいずれかで連を終端する。
+- 連は 1 つ以上の本文行を持たなければならない。
 - 時刻は秒数の `number` に変換する。
-- 時刻は昇順でなければならない。
-- 時刻マーカーのない本文行は、初期仕様ではエラーとする。
+- 時刻は連間で昇順でなければならない。
+- 時刻マーカーより前に本文行を記述することはできない。
 - 不正な形式の行がある場合はパースエラーとする。
-
-### 5.4 将来拡張候補
-
-将来的には以下を検討する。
-
-```text
-[00:00.000]
-春の夜に
-
-[00:04.200]
-静かに雨が降る
-```
-
-または、連単位の同期。
-
-```text
-[00:00.000]
-春の夜に
-静かに雨が降る
-
-[00:08.600]
-遠い灯りが
-川面に揺れている
-```
-
-初期仕様では、実装を単純にするため行単位同期を基本とする。
 
 ## 6. 内部データ構造
 
-### 6.1 PoemLine
+### 6.1 PoemStanza
 
 ```ts
-export type PoemLine = {
+export type PoemStanza = {
   id: string;
   time: number;
-  text: string;
+  lines: string[];
 };
 ```
 
@@ -200,7 +178,7 @@ export type PoemLine = {
 export type PoemDocument = {
   title?: string;
   audioSrc: string;
-  lines: PoemLine[];
+  stanzas: PoemStanza[];
 };
 ```
 
@@ -209,19 +187,14 @@ export type PoemDocument = {
 ```json
 [
   {
-    "id": "line-1",
+    "id": "stanza-1",
     "time": 0,
-    "text": "春の夜に"
+    "lines": ["春の夜に", "静かに雨が降る"]
   },
   {
-    "id": "line-2",
-    "time": 4.2,
-    "text": "静かに雨が降る"
-  },
-  {
-    "id": "line-3",
+    "id": "stanza-2",
     "time": 8.6,
-    "text": "遠い灯りが"
+    "lines": ["遠い灯りが", "川面に揺れている"]
   }
 ]
 ```
@@ -233,16 +206,16 @@ export type PoemDocument = {
 型定義を提供する。
 
 ```ts
-export type PoemLine = {
+export type PoemStanza = {
   id: string;
   time: number;
-  text: string;
+  lines: string[];
 };
 
 export type PoemDocument = {
   title?: string;
   audioSrc: string;
-  lines: PoemLine[];
+  stanzas: PoemStanza[];
 };
 ```
 
@@ -251,13 +224,13 @@ export type PoemDocument = {
 初期実装用のTypeScriptパーサを提供する。
 
 ```ts
-export function parsePoem(source: string): PoemLine[];
+export function parsePoem(source: string): PoemStanza[];
 ```
 
 責務:
 
 - 同期マーカー付き詩テキストをパースする。
-- `PoemLine[]` を返す。
+- `PoemStanza[]` を返す。
 - 不正な形式の場合は例外を投げる。
 - 時刻が昇順でない場合は例外を投げる。
 
@@ -266,15 +239,15 @@ export function parsePoem(source: string): PoemLine[];
 Ruby / ruby.wasm から返されたJSONを検証する。
 
 ```ts
-export function assertPoemLines(value: unknown): asserts value is PoemLine[];
+export function assertPoemStanzas(value: unknown): asserts value is PoemStanza[];
 ```
 
 責務:
 
-- `unknown` な入力が `PoemLine[]` として妥当か検証する。
+- `unknown` な入力が `PoemStanza[]` として妥当か検証する。
 - `id` が文字列であることを確認する。
 - `time` が有限の数値であることを確認する。
-- `text` が文字列であることを確認する。
+- `lines` が非空文字列の非空配列であることを確認する。
 - 不正な場合は例外を投げる。
 
 ### 7.4 `renderer.ts`
@@ -283,7 +256,7 @@ export function assertPoemLines(value: unknown): asserts value is PoemLine[];
 
 ```ts
 export function renderPoem(
-  lines: PoemLine[],
+  stanzas: PoemStanza[],
   container: HTMLElement
 ): HTMLElement[];
 ```
@@ -291,17 +264,23 @@ export function renderPoem(
 責務:
 
 - `container` の中身を初期化する。
-- 各 `PoemLine` から `<p>` 要素を生成する。
+- 各 `PoemStanza` から `<div>` 要素を生成し、内側に各本文行ぶんの `<p>` を生成する。
 - 本文は `textContent` として挿入する。
-- 各要素に `id`、`class`、`data-time` を付与する。
-- 生成した要素配列を返す。
+- 連の `<div>` には `id`、`class="stanza"`、`data-time` を付与する。
+- 生成した連要素の配列を返す。
 
 生成されるDOM例:
 
 ```html
 <div id="poem" class="poem">
-  <p id="line-1" class="line" data-time="0">春の夜に</p>
-  <p id="line-2" class="line" data-time="4.2">静かに雨が降る</p>
+  <div id="stanza-1" class="stanza" data-time="0">
+    <p class="stanza-line">春の夜に</p>
+    <p class="stanza-line">静かに雨が降る</p>
+  </div>
+  <div id="stanza-2" class="stanza" data-time="8.6">
+    <p class="stanza-line">遠い灯りが</p>
+    <p class="stanza-line">川面に揺れている</p>
+  </div>
 </div>
 ```
 
@@ -313,7 +292,7 @@ export function renderPoem(
 export class PoemPlayer {
   constructor(params: {
     audio: HTMLAudioElement;
-    lines: PoemLine[];
+    stanzas: PoemStanza[];
     elements: HTMLElement[];
   });
 }
@@ -322,7 +301,7 @@ export class PoemPlayer {
 責務:
 
 - `audio.currentTime` を監視する。
-- 現在時刻に対応する `PoemLine` を特定する。
+- 現在時刻に対応する `PoemStanza` を特定する。
 - 対応するDOM要素に `active` クラスを付与する。
 - 以前の要素から `active` クラスを外す。
 - 必要に応じて該当要素をスクロールする。
@@ -331,8 +310,8 @@ export class PoemPlayer {
 
 - 再生中は `requestAnimationFrame` で同期状態を更新する。
 - 停止中は更新ループを止める。
-- 現在行が変化した場合のみDOM更新を行う。
-- 現在行の探索には二分探索を用いる。
+- 現在の連が変化した場合のみDOM更新を行う。
+- 現在の連の探索には二分探索を用いる。
 - `seeked` イベント発生時には即座に表示を更新する。
 
 ### 7.6 `main.ts`
@@ -409,7 +388,7 @@ export class PoemPlayer {
 
 ### 8.3 スクロール
 
-- 現在行が変化したときに、該当要素を表示範囲の中央付近へ移動する。
+- 現在の連が変化したときに、該当要素を表示範囲の中央付近へ移動する。
 - 初期実装では `scrollIntoView()` を使用する。
 - 縦書き表示に対応するため、`block` と `inline` の両方を指定する。
 
@@ -425,7 +404,7 @@ element.scrollIntoView({
 
 - 現在読まれている行に `active` クラスを付与する。
 - それ以外の行は通常表示とする。
-- 初期仕様では1行のみをactiveにする。
+- 初期仕様では1連のみをactiveにする。
 
 ## 9. 音声仕様
 
@@ -438,18 +417,23 @@ element.scrollIntoView({
 ### 9.2 同期方法
 
 - `audio.currentTime` を現在時刻として使用する。
-- 現在時刻以下で、最も近い時刻マーカーを持つ行を現在行とする。
+- 現在時刻以下で、最も近い時刻マーカーを持つ連を現在の連とする。
 
 例:
 
 ```text
 現在時刻: 5.0秒
 
-[00:00.000] 春の夜に
-[00:04.200] 静かに雨が降る
-[00:08.600] 遠い灯りが
+[00:00.000]
+春の夜に
 
-=> 現在行は「静かに雨が降る」
+[00:04.200]
+静かに雨が降る
+
+[00:08.600]
+遠い灯りが
+
+=> 現在の連は「静かに雨が降る」
 ```
 
 ## 10. エラー仕様
@@ -459,10 +443,11 @@ element.scrollIntoView({
 以下の場合はパースエラーとする。
 
 - 時刻マーカーの形式が不正
-- 本文が空
+- マーカー行に本文が含まれている
+- 連に本文行がない
 - 時刻が昇順でない
 - 時刻が数値として解釈できない
-- 時刻マーカーなしの本文行がある
+- 最初の時刻マーカーより前に本文行がある
 
 ### 10.2 表示方法
 
@@ -502,7 +487,8 @@ Denoのテスト機能を用いる。
 対象:
 
 - 時刻マーカーのパース
-- 正常系の `PoemLine[]` 生成
+- 正常系の `PoemStanza[]` 生成
+- 連単位の本文集約
 - 不正形式の検出
 - 時刻昇順チェック
 - 空行処理
@@ -511,17 +497,22 @@ Denoのテスト機能を用いる。
 テスト例:
 
 ```ts
-Deno.test("parse poem lines", () => {
+Deno.test("parse poem stanzas", () => {
   const source = `
-[00:00.000] 春の夜に
-[00:04.200] 静かに雨が降る
+[00:00.000]
+春の夜に
+静かに雨が降る
+
+[00:08.600]
+遠い灯りが
+川面に揺れている
 `;
 
-  const lines = parsePoem(source);
+  const stanzas = parsePoem(source);
 
-  assertEquals(lines, [
-    { id: "line-1", time: 0, text: "春の夜に" },
-    { id: "line-2", time: 4.2, text: "静かに雨が降る" },
+  assertEquals(stanzas, [
+    { id: "stanza-1", time: 0, lines: ["春の夜に", "静かに雨が降る"] },
+    { id: "stanza-2", time: 8.6, lines: ["遠い灯りが", "川面に揺れている"] },
   ]);
 });
 ```
@@ -563,7 +554,7 @@ TypeScript側ではRubyの返却値を `unknown` として扱い、実行時検�
 
 ```ts
 const result = await rubyBridge.parsePoem(source);
-assertPoemLines(result);
+assertPoemStanzas(result);
 ```
 
 ### 12.4 互換性テスト
@@ -676,7 +667,7 @@ service-worker.js
 
 ### Phase 1: TypeScriptのみでのプロトタイプ
 
-- `PoemLine` 型定義
+- `PoemStanza` 型定義
 - `parsePoem()` 実装
 - `renderPoem()` 実装
 - `PoemPlayer` 実装

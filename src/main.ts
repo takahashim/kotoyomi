@@ -21,10 +21,10 @@ async function main(): Promise<void> {
       throw new Error(`詩テキストの取得に失敗しました (${response.status})`);
     }
     const source = await response.text();
-    const lines = parsePoem(source);
-    const elements = renderPoem(lines, poemContainer);
+    const stanzas = parsePoem(source);
+    const elements = renderPoem(stanzas, poemContainer);
     audio.src = AUDIO_URL;
-    new PoemPlayer({ audio, lines, elements });
+    new PoemPlayer({ audio, stanzas, elements });
   } catch (err) {
     console.error(err);
     errorEl.textContent = `詩テキストの読み込みに失敗しました。\n${

@@ -1,11 +1,11 @@
-export type PoemLine = {
+export type PoemStanza = {
   id: string;
   time: number;
-  text: string;
+  lines: string[];
 };
 
 export type PoemDocument = {
   title?: string;
   audioSrc: string;
-  lines: PoemLine[];
+  stanzas: PoemStanza[];
 };

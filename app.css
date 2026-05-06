@@ -37,15 +37,22 @@ body {
   justify-content: center;
 }
 
-.line {
+.stanza {
   display: none;
   margin: 0;
   text-align: center;
 }
 
-.line.active {
-  display: block;
+.stanza.active {
+  display: flex;
+  flex-direction: row;
+  align-items: center;
+  gap: 0.4em;
   font-weight: 600;
+}
+
+.stanza-line {
+  margin: 0;
 }
 
 audio {
