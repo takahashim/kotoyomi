@@ -60,13 +60,13 @@ kotoyomi/
   deno.json
 
   src/
-    main.ts            ← ブートストラップ、トラックロード、Ruby 起動
-    types.ts           ← Cue 型 (TS↔Ruby 受け渡し用)
-    ruby_engine.ts     ← ruby.wasm のロードと Ruby 側エントリ呼び出し
+    main.ts            ← ブートストラップ (~15 行)
+    ruby_runtime.ts    ← ruby.wasm の VM 起動と Kotoyomi.start 呼び出し
 
   src-rb/
-    renderer.rb        ← DOM 生成
-    player.rb          ← cuechange ハンドリング・ハイライト
+    kotoyomi.rb        ← アプリのエントリポイント (Kotoyomi::App)
+    renderer.rb        ← DOM 生成 (Kotoyomi::Renderer)
+    player.rb          ← cuechange ハンドリング・ハイライト (Kotoyomi::Player)
 
   poems/
     sample.vtt
@@ -107,36 +107,16 @@ stanza-2
 
 ## 6. 内部データ構造
 
-### 6.1 Cue
-
-JS 側から Ruby へ受け渡す薄い構造的型。`VTTCue` の必要なサブセットを表す。
-
-```ts
-export type Cue = {
-  id: string;
-  startTime: number;
-  text: string;
-};
-```
-
-`VTTCue` から `{ id, startTime, text }` を抜き出し、`vm.wrap()` で Ruby 側に渡す。
+専用のデータ転送型は持たない。Ruby 側は `VTTCue` (`TextTrackCueList` の要素) を `js` gem 経由で直接扱い、`cue[:id]` / `cue[:startTime]` / `cue[:text]` でプロパティにアクセスする。
 
 ## 7. TypeScriptモジュール仕様
 
-### 7.1 `types.ts`
+### 7.1 `ruby_runtime.ts`
 
-`Cue` 型を提供する。
-
-### 7.2 `ruby_engine.ts`
-
-ruby.wasm の動的ロードと、`src-rb/*.rb` の eval、TS↔Ruby のグルーを提供する。
+ruby.wasm の動的ロードと、`src-rb/*.rb` の eval、Ruby エントリ呼び出し。
 
 ```ts
-export async function startRubyEngine(params: {
-  track: TextTrack;
-  cues: Cue[];
-  container: HTMLElement;
-}): Promise<void>;
+export async function bootRuby(): Promise<void>;
 ```
 
 責務:
@@ -144,24 +124,22 @@ export async function startRubyEngine(params: {
 - `@ruby/wasm-wasi` の `DefaultRubyVM` を CDN (jsDelivr) から動的 import する。
 - `@ruby/3.4-wasm-wasi/dist/ruby+stdlib.wasm` を fetch + `WebAssembly.compileStreaming`。
 - Ruby VM を起動。
-- `src-rb/renderer.rb` と `src-rb/player.rb` を fetch して `vm.eval` で評価。
-- `Kotoyomi::Renderer.render(cues, container)` を呼び、戻り値の要素配列を `Kotoyomi::Player.new(track, elements)` に渡す。
+- `src-rb/*.rb` を順序付き (renderer → player → kotoyomi) に fetch して `vm.eval` で評価。
+- `vm.evalAsync("Kotoyomi.start")` で Ruby に制御を渡す (`evalAsync` は Ruby 内 `Promise#await` を許容する)。
 
-ruby.wasm 配布物の取得失敗時は呼び出し元に例外を投げる。
+TS↔Ruby 界面は `Kotoyomi.start` の 1 関数呼び出しのみ。Renderer / Player / App のクラス名は TS から見えない。
 
-### 7.3 `main.ts`
+### 7.2 `main.ts`
 
-アプリケーションのエントリポイント。
+アプリケーションのエントリポイント、薄いブートストラップ。
 
 責務:
 
-- `<audio>`、`<track>`、`#poem`、`#error`、`#reset` のDOM要素を取得する。
-- `<audio>` に音声URLを設定する。
-- 「最初に戻る」ボタンのクリックで `audio.currentTime = 0` に。
-- `<track>` の `load` イベントを待つ (`readyState === 2` で即解決)。
-- `track.cues` から `Cue[]` を生成する。
-- `startRubyEngine` を呼ぶ。
-- ロード失敗時は `#error` にメッセージを表示する。
+- DOM 待機 (`DOMContentLoaded`)。
+- `bootRuby()` 呼び出し。
+- ruby.wasm 起動が失敗した場合のみ `#error` にメッセージを表示する (Ruby が動き始める前のエラーは TS でしか拾えないため)。
+
+それ以外のアプリ制御は全て Ruby に委ねる。
 
 ## 8. Ruby エンジン仕様
 
@@ -173,22 +151,63 @@ ruby.wasm 配布物の取得失敗時は呼び出し元に例外を投げる。
 - jsDelivr CDN から ESM とWASMを動的取得する (vendor 化は将来検討)。
 - ブラウザにおける `js` gem (`require "js"`) を介して DOM を直接操作する。
 
-### 8.2 `src-rb/renderer.rb`
+### 8.2 `src-rb/kotoyomi.rb`
+
+アプリのエントリポイント。TS が呼ぶ `Kotoyomi.start` は `Kotoyomi::App.new.start` への薄い委譲で、実体は `App` クラスのインスタンスメソッドが持つ。
 
 ```ruby
 module Kotoyomi
-  module Renderer
-    def self.render(cues, container)
-      # 各 cue から <div class="stanza"><p class="stanza-line">...</p></div> を生成
-      # 生成した連要素の JS::Array を返す
+  def self.start
+    App.new.start
+  end
+
+  class App
+    def initialize
+      # @audio, @track_el, @poem, @error_el, @reset_btn を保持
     end
+
+    def start
+      # トラック load 待機 → Renderer.render → Player.new
+      # reset ボタン配線、初期表示確定 (audio.currentTime = 0)
+    rescue => e
+      report_error(e)
+      raise
+    end
+
+    private
+
+    def wait_for_track_load   # JS::Promise#await でロードを待機
+    def report_error(e)        # #error 要素にメッセージ表示
   end
 end
 ```
 
-`textContent` 経由で本文を挿入し、XSS対策を維持する。
+責務: DOM 取得、トラック lifecycle 待機、Renderer/Player のオーケストレーション、UI イベント (reset ボタン)、初期表示確定、エラーハンドリング。`Promise#await` を使うため `vm.evalAsync` で呼び出される。
 
-### 8.3 `src-rb/player.rb`
+### 8.3 `src-rb/renderer.rb`
+
+```ruby
+module Kotoyomi
+  class Renderer
+    def initialize(cues, container)
+      # @cues, @container, @document を保持
+    end
+
+    def render
+      # 各 cue から <div class="stanza"><p class="stanza-line">...</p></div> を生成
+      # 生成した連要素の JS::Array を返す
+    end
+
+    private
+
+    def build_stanza(cue, index)  # 1 連分の DOM 生成
+  end
+end
+```
+
+`textContent` 経由で本文を挿入し、XSS対策を維持する。1 連分の生成は `build_stanza` に切り出し、`render` は反復のみに専念。
+
+### 8.4 `src-rb/player.rb`
 
 ```ruby
 module Kotoyomi
@@ -203,7 +222,7 @@ end
 
 `cuechange` イベントだけで動作する。現在の cue 特定は `cue.startTime` を用いた線形探索 (`js` gem で `Function.prototype.call` 越しの indexOf を呼ぶより素直なため)。
 
-### 8.4 ランタイム互換性
+### 8.5 ランタイム互換性
 
 将来的に [mruby](https://mruby.org/) や [PicoRuby](https://github.com/picoruby/picoruby) の WASM ビルドへ置き換える可能性がある。`js` gem は CRuby 固有なので置き換え時には JS interop 層の書き換えが発生する。Ruby 側コードは標準的な構文に留め、移行時の差分が読みやすい状態を保つ。
 
@@ -309,7 +328,10 @@ end
 
 - エラーはコンソールに出力する。
 - `#error` 要素の `textContent` に簡潔なメッセージを設定し `hidden` を外す。
-- エラー時は Ruby エンジンの起動を完遂しない。
+- 表示の責務はエラー発生箇所による:
+  - ruby.wasm 起動前 (TS 段階) のエラー → `src/main.ts` が表示
+  - Ruby 起動後のエラー → `Kotoyomi::App#start` の `rescue` 節が表示し再 raise
+- エラー時は Kotoyomi の起動を完遂しない。
 
 ## 12. Deno開発仕様
 
@@ -318,7 +340,7 @@ end
 ```json
 {
   "tasks": {
-    "check": "deno check src/main.ts src/types.ts src/ruby_engine.ts",
+    "check": "deno check src/main.ts src/ruby_runtime.ts",
     "lint": "deno lint",
     "fmt": "deno fmt",
     "serve": "deno run --allow-net --allow-read jsr:@std/http/file-server",

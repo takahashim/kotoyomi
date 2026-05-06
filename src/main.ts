@@ -1,25 +1,17 @@
-import { startRubyEngine } from "./ruby_engine.ts";
+import { bootRuby } from "./ruby_runtime.ts";
 
 async function main(): Promise<void> {
-  const audio = document.getElementById("audio") as HTMLAudioElement;
-  const trackEl = document.getElementById("track") as HTMLTrackElement;
-  const poem = document.getElementById("poem") as HTMLElement;
-  const errorEl = document.getElementById("error") as HTMLElement;
-  const resetBtn = document.getElementById("reset") as HTMLButtonElement;
-
-  resetBtn.addEventListener("click", () => {
-    audio.currentTime = 0;
-  });
-
   try {
-    await startRubyEngine({ trackEl, container: poem });
-    audio.currentTime = 0;
+    await bootRuby();
   } catch (err) {
     console.error(err);
-    errorEl.textContent = `起動に失敗しました。\n${
-      err instanceof Error ? err.message : String(err)
-    }`;
-    errorEl.hidden = false;
+    const errorEl = document.getElementById("error") as HTMLElement | null;
+    if (errorEl) {
+      errorEl.textContent = `起動に失敗しました。\n${
+        err instanceof Error ? err.message : String(err)
+      }`;
+      errorEl.hidden = false;
+    }
   }
 }
 
