@@ -1,6 +1,7 @@
 import type { Cue } from "./types.ts";
 import { renderPoem } from "./renderer.ts";
 import { PoemPlayer } from "./player.ts";
+import { startRubyEngine } from "./ruby_engine.ts";
 
 const AUDIO_URL = "poems/sample.mp3";
 
@@ -17,19 +18,28 @@ async function main(): Promise<void> {
 
   audio.src = AUDIO_URL;
 
+  const engine = new URLSearchParams(globalThis.location.search).get("engine") ?? "ts";
+
   try {
     const track = trackEl.track;
     track.mode = "hidden";
     await waitForTrackLoad(trackEl);
     const cues = track.cues ? Array.from(track.cues) as VTTCue[] : [];
+    const cueData = cues.map(toCue);
 
-    const elements = renderPoem(cues.map(toCue), poemContainer);
-    new PoemPlayer({ track, elements });
+    if (engine === "ruby") {
+      await startRubyEngine({ track, cues: cueData, container: poemContainer });
+    } else {
+      const elements = renderPoem(cueData, poemContainer);
+      new PoemPlayer({ track, elements });
+    }
   } catch (err) {
     console.error(err);
-    errorEl.textContent = `字幕トラックの読み込みに失敗しました。\n${
-      err instanceof Error ? err.message : String(err)
-    }`;
+    errorEl.textContent = `${
+      engine === "ruby"
+        ? "Ruby エンジンの起動に失敗しました。"
+        : "字幕トラックの読み込みに失敗しました。"
+    }\n${err instanceof Error ? err.message : String(err)}`;
     errorEl.hidden = false;
   }
 }

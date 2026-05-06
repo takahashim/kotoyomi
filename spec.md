@@ -6,7 +6,7 @@
 
 詩テキストの記述・パース・同期にはWeb標準のWebVTTを採用し、ブラウザネイティブの`<track kind="metadata">`に処理を任せる。アプリケーション固有のフォーマットや自前パーサは持たない。
 
-開発時はDeno / TypeScriptを使用し、ブラウザ配布物ではTypeScriptをJavaScriptに変換して実行する。
+開発時はDeno / TypeScriptを使用し、ブラウザ配布物ではTypeScriptをJavaScriptに変換して実行する。実験的に ruby.wasm を用いた Ruby 版エンジンを併設し、最終的には Ruby を主役の制御層として位置付ける構成を目指す。
 
 ## 2. 基本方針
 
@@ -27,12 +27,32 @@
 
 #### TypeScript / JavaScript 側
 
-- DOM要素の取得とレンダリング
-- cue情報からの本文DOM生成
-- `cuechange`イベントを受けたハイライト付け替え
+- DOM要素の取得とエンジン dispatcher (URL クエリで TS / Ruby 切替)
+- TS エンジン: cue情報からの本文DOM生成と `cuechange` ハイライト付け替え
+- ruby.wasm のロードとブートストラップ
 - ロードエラーのユーザー向け表示
 
-DOM操作とレンダリングだけを担い、フォーマット解釈や同期ループは持たない。
+#### Ruby エンジン (オプション、`?engine=ruby`)
+
+- `js` gem 経由の DOM 生成 (renderer)
+- `cuechange` イベント購読とハイライト付け替え (player)
+
+#### CSS
+
+- 縦書き・中央表示・ハイライトなどの視覚効果
+
+### 2.3 役割の長期方針
+
+最終的には次の役割分担に寄せていく:
+
+| 層 | 役割 |
+|---|---|
+| WebVTT | 朗読データ |
+| Ruby | プレイヤー制御・状態遷移・DOM 操作 |
+| CSS | 視覚効果 |
+| JS/TS | ruby.wasm 起動・最小限のホスト |
+
+現状の TS/Ruby 併存はこの最終形態への過渡形態として位置付ける。
 
 ## 3. アーキテクチャ
 
@@ -43,7 +63,9 @@ poems/sample.vtt (WebVTT)
         ↓
 TextTrack.cues / cuechange イベント
         ↓
-TypeScript レンダラ + プレイヤー
+URL ?engine 分岐
+   ├─ ts   → TypeScript レンダラ + プレイヤー
+   └─ ruby → ruby.wasm 上の Kotoyomi::Renderer + Kotoyomi::Player
         ↓
 HTML / CSS / DOM
 ```
@@ -57,10 +79,15 @@ kotoyomi/
   deno.json
 
   src/
-    main.ts
+    main.ts            ← ブートストラップ・エンジン dispatcher
     types.ts
-    renderer.ts
-    player.ts
+    renderer.ts        ← TS エンジン
+    player.ts          ← TS エンジン
+    ruby_engine.ts     ← Ruby エンジンのロード・グルー
+
+  src-rb/
+    renderer.rb        ← Ruby エンジン
+    player.rb          ← Ruby エンジン
 
   poems/
     sample.vtt
@@ -123,7 +150,7 @@ export type Cue = {
 
 ### 7.2 `renderer.ts`
 
-詩本文をDOMとして描画する。
+詩本文をDOMとして描画する (TS エンジン)。
 
 ```ts
 export function renderPoem(
@@ -153,7 +180,7 @@ export function renderPoem(
 
 ### 7.3 `player.ts`
 
-`TextTrack`の`cuechange`イベントを購読し、現在のcueに対応するDOM要素のハイライトを管理する。
+`TextTrack`の`cuechange`イベントを購読し、現在のcueに対応するDOM要素のハイライトを管理する (TS エンジン)。
 
 ```ts
 export class PoemPlayer {
@@ -174,22 +201,90 @@ export class PoemPlayer {
 
 `requestAnimationFrame` ループや `audio.currentTime` の監視は行わない (ブラウザがcue管理を行うため)。
 
-### 7.4 `main.ts`
+### 7.4 `ruby_engine.ts`
 
-アプリケーションのエントリポイント。
+ruby.wasm の動的ロードと、`src-rb/*.rb` の eval、TS↔Ruby のグルーを提供する。
+
+```ts
+export async function startRubyEngine(params: {
+  track: TextTrack;
+  cues: Cue[];
+  container: HTMLElement;
+}): Promise<void>;
+```
+
+責務:
+
+- `@ruby/wasm-wasi` の `DefaultRubyVM` を CDN (jsDelivr) から動的 import する。
+- `@ruby/3.4-wasm-wasi/dist/ruby+stdlib.wasm` を fetch + `WebAssembly.compileStreaming`。
+- Ruby VM を起動。
+- `src-rb/renderer.rb` と `src-rb/player.rb` を fetch して `vm.eval` で評価。
+- `Kotoyomi::Renderer.render(cues, container)` を呼び、戻り値の要素配列を `Kotoyomi::Player.new(track, elements)` に渡す。
+
+ruby.wasm 配布物の取得失敗時は呼び出し元に例外を投げる。
+
+### 7.5 `main.ts`
+
+アプリケーションのエントリポイント、エンジン dispatcher。
 
 責務:
 
 - `<audio>`、`<track>`、`#poem`、`#error` のDOM要素を取得する。
 - `<audio>` に音声URLを設定する。
 - `<track>` の `load` イベントを待つ (`readyState === 2` で即解決)。
-- `track.cues` から `Cue[]` を生成し `renderPoem` を呼ぶ。
-- `PoemPlayer` を初期化する。
+- `track.cues` から `Cue[]` を生成する。
+- URL クエリ `engine` を読み:
+  - `ts` (既定) なら `renderPoem` + `new PoemPlayer`
+  - `ruby` なら `startRubyEngine` を呼ぶ
 - ロード失敗時は `#error` にメッセージを表示する。
 
-## 8. UI仕様
+## 8. Ruby エンジン仕様 (オプション)
 
-### 8.1 基本画面
+`?engine=ruby` 指定時に動作する代替エンジン。`src-rb/*.rb` を ruby.wasm 上で実行する。
+
+### 8.1 ランタイム
+
+- `@ruby/3.4-wasm-wasi` v2.x (CRuby 3.4 + WASI) を採用。
+- jsDelivr CDN から ESM とWASMを動的取得する (vendor 化は将来検討)。
+- ブラウザにおける `js` gem (`require "js"`) を介して DOM を直接操作する。
+
+### 8.2 `src-rb/renderer.rb`
+
+```ruby
+module Kotoyomi
+  module Renderer
+    def self.render(cues, container)
+      # 各 cue から <div class="stanza"><p class="stanza-line">...</p></div> を生成
+      # 生成した連要素の JS::Array を返す
+    end
+  end
+end
+```
+
+責務は TS 版 `renderer.ts` と等価。`textContent` 経由で本文を挿入し、XSS対策を維持する。
+
+### 8.3 `src-rb/player.rb`
+
+```ruby
+module Kotoyomi
+  class Player
+    def initialize(track, elements)
+      # track.mode = "hidden"
+      # track.addEventListener("cuechange") { update }
+    end
+  end
+end
+```
+
+責務は TS 版 `player.ts` と等価。`cuechange` イベントだけで動作する。
+
+### 8.4 ランタイム互換性
+
+将来的に [mruby](https://mruby.org/) や [PicoRuby](https://github.com/picoruby/picoruby) の WASM ビルドへ置き換える可能性がある。`js` gem は CRuby 固有なので置き換え時には JS interop 層の書き換えが発生する。Ruby 側コードは標準的な構文に留め、移行時の差分が読みやすい状態を保つ。
+
+## 9. UI仕様
+
+### 9.1 基本画面
 
 ```html
 <main class="app">
@@ -205,7 +300,7 @@ export class PoemPlayer {
 </main>
 ```
 
-### 8.2 縦書き表示
+### 9.2 縦書き表示
 
 詩本文はCSSで縦書き表示する。現在の連のみを中央に表示する。
 
@@ -246,51 +341,45 @@ export class PoemPlayer {
 }
 ```
 
-### 8.3 ハイライト
+### 9.3 ハイライト
 
 - 現在の連のみに `active` クラスを付与する。
 - それ以外の連は `display: none` で非表示。
 - 初期仕様では1連のみをactiveにする。
 
-## 9. 音声仕様
+## 10. 音声仕様
 
-### 9.1 音声ファイル
+### 10.1 音声ファイル
 
 - 音声ファイルはHTMLの `<audio>` 要素で再生する。
 - 初期対応形式はブラウザ互換性を考慮し、MP3を基本とする。
 - 将来的にOGG、WAV等にも対応可能とする。
 
-### 9.2 同期方法
+### 10.2 同期方法
 
 ブラウザの `TextTrack` API が同期を担当する。アプリ側は `cuechange` イベントを受けて、`track.activeCues[0]` を現在の連として表示する。
 
-## 10. エラー仕様
+## 11. エラー仕様
 
-### 10.1 ロードエラー
+### 11.1 ロードエラー
 
-`<track>` 要素の `error` イベントが発生した場合 (VTTファイルの取得失敗、パース失敗) に画面上にメッセージを表示する。
+- `<track>` 要素の `error` イベントが発生した場合 (VTTファイルの取得失敗、パース失敗) に画面上にメッセージを表示する。
+- `?engine=ruby` で ruby.wasm またはRubyソースの取得に失敗した場合も同様。
 
-### 10.2 表示方法
+### 11.2 表示方法
 
 - エラーはコンソールに出力する。
 - `#error` 要素の `textContent` に簡潔なメッセージを設定し `hidden` を外す。
 - エラー時は `PoemPlayer` を初期化しない。
 
-例:
+## 12. Deno開発仕様
 
-```text
-字幕トラックの読み込みに失敗しました。
-track load error
-```
-
-## 11. Deno開発仕様
-
-### 11.1 `deno.json`
+### 12.1 `deno.json`
 
 ```json
 {
   "tasks": {
-    "check": "deno check src/main.ts src/types.ts src/renderer.ts src/player.ts",
+    "check": "deno check src/main.ts src/types.ts src/renderer.ts src/player.ts src/ruby_engine.ts",
     "lint": "deno lint",
     "fmt": "deno fmt",
     "serve": "deno run --allow-net --allow-read jsr:@std/http/file-server",
@@ -299,25 +388,30 @@ track load error
 }
 ```
 
-### 11.2 単体テスト
+### 12.2 単体テスト
 
-WebVTTパースとcue同期はブラウザに委ねるため、Deno上での単体テストは置かない。`deno task check` で型整合を、ブラウザでの実行で挙動を検証する。
+WebVTTパースとcue同期はブラウザに委ね、Ruby エンジンのDOM操作は ruby.wasm/ブラウザに依存するため、Deno上での単体テストは置かない。`deno task check` で型整合を、ブラウザでの実行で挙動を検証する。
 
-## 12. セキュリティ・安全性
+## 13. セキュリティ・安全性
 
-### 12.1 HTML挿入
+### 13.1 HTML挿入
 
-- cue本文は `innerHTML` ではなく `textContent` で挿入する。
+- cue本文は `innerHTML` ではなく `textContent` で挿入する (TS / Ruby とも)。
 - WebVTTのインラインタグも本実装では平文として扱う。
 
-### 12.2 ファイル読み込み
+### 13.2 ファイル読み込み
 
-- 初期仕様では同梱された `.vtt` と `.mp3` のみを読み込む。
+- 初期仕様では同梱された `.vtt` と `.mp3`、および `src-rb/*.rb` のみを読み込む。
 - 任意ファイルアップロード対応は将来拡張とする。
 
-## 13. スタンドアローン配布仕様
+### 13.3 外部依存
 
-### 13.1 配布物
+- `?engine=ruby` 指定時のみ jsDelivr CDN から ruby.wasm 配布物を取得する。
+- TS エンジンは外部ネットワークアクセスなしで完結する。
+
+## 14. スタンドアローン配布仕様
+
+### 14.1 配布物
 
 ```text
 dist/
@@ -327,9 +421,12 @@ app.css
 poems/
   sample.vtt
   sample.mp3
+src-rb/
+  renderer.rb
+  player.rb
 ```
 
-### 13.2 実行方法
+### 14.2 実行方法
 
 任意の静的Webサーバー上で実行する。同一オリジンであることが前提。
 
@@ -339,11 +436,11 @@ poems/
 deno task serve
 ```
 
-### 13.3 完全オフライン対応
+### 14.3 完全オフライン対応
 
-将来的にPWA化する場合は `manifest.json` と `service-worker.js` を追加し、対象ファイルをキャッシュする。
+将来的にPWA化する場合は `manifest.json` と `service-worker.js` を追加し、対象ファイルをキャッシュする。Ruby エンジンを完全オフライン化する場合は ruby.wasm 配布物も vendor/ に取り込む。
 
-## 14. 非目標
+## 15. 非目標
 
 初期仕様では以下を対象外とする。
 
@@ -359,14 +456,14 @@ deno task serve
 - WebVTTのcue settings (vertical, line, position 等) のサポート
 - WebVTTのインラインタグのサポート
 
-## 15. 将来拡張
+## 16. 将来拡張
 
 将来的には以下を検討する。
 
 - ルビ対応
 - 傍点対応
 - 注釈表示
-- PWA化
+- PWA化 (ruby.wasm の vendor 化を含む)
 - 複数作品切り替え
 - テーマ切り替え
 - 手動スクロール中の自動スクロール一時停止
@@ -374,8 +471,11 @@ deno task serve
 - 同期マーカー編集UI
 - WebVTTのインラインタグ対応 (`<v>` で話者識別 等)
 - WebVTT timestampタグによる逐字同期
+- mruby.wasm / PicoRuby.wasm への置き換え
+- `js` gem 抽象化レイヤーの導入 (ランタイム差し替えに備えた DOM 操作 DSL)
+- TS エンジンを撤去して Ruby を主役とする最終形態への移行
 
-## 16. 初期実装の優先順位
+## 17. 初期実装の優先順位
 
 ### Phase 1: WebVTTベースのプロトタイプ
 
@@ -399,16 +499,38 @@ deno task serve
 - フォントサイズ・行間調整
 - 縦書き時の表示崩れ確認
 
-## 17. 基本方針の要約
+### Phase 4: Ruby エンジン併設
 
-このアプリは、フォーマット解釈と同期処理をブラウザ標準 (WebVTT API) に委ね、TypeScript側はDOMレンダリングとUI制御だけを担う。
+- ruby.wasm の動的ロード
+- `src-rb/renderer.rb`、`src-rb/player.rb` 実装
+- URL クエリによる engine 切替
+- TS 版とのリグレッション比較
+
+### Phase 5: 軽量 Ruby ランタイムへの移行検討
+
+- mruby.wasm / PicoRuby.wasm の評価
+- `js` gem 抽象化レイヤーの設計
+- TS エンジン撤去のタイミング判断
+
+## 18. 基本方針の要約
+
+このアプリは、フォーマット解釈と同期処理をブラウザ標準 (WebVTT API) に委ね、アプリケーション層は最小限の仕事だけを担う。その「最小限」を TS で書く版と Ruby で書く版を併設し、最終的には Ruby を主役の制御層として置く形を目指す。
 
 ```text
+WebVTT:
+  朗読データ
+
 ブラウザ (WebVTT API):
   詩フォーマットの解釈と音声との同期を担当する
 
-TypeScript:
-  DOMレンダリングとUIイベント処理を担当する
+CSS:
+  視覚効果を担当する
+
+Ruby (将来的に主役):
+  プレイヤー制御・状態遷移・DOM 操作を担当する
+
+JS/TS:
+  ruby.wasm 起動と最小限のホストを担当する
 ```
 
-この分担により、自前実装を最小限に保ちつつ、字幕系ツール (Aegisubなど) との互換性も得られる。
+この分担により、自前実装を最小限に保ちつつ、字幕系ツール (Aegisubなど) との互換性、および ruby.wasm エコシステムでの実験を両立する。

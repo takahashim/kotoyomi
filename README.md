@@ -30,6 +30,20 @@ deno task build     # src/main.ts を dist/app.js にバンドル
 
 サンプル朗読音声 (`poems/sample.mp3`) と WebVTT 字幕 (`poems/sample.vtt`) は同梱されています。
 
+## エンジン切替 (実験)
+
+URL クエリ `engine` で renderer/player の実装言語を切り替えられます。
+
+- `http://localhost:8000/` または `?engine=ts` — TS 版（既定）
+- `http://localhost:8000/?engine=ruby` — ruby.wasm 版
+
+Ruby 版は `src-rb/renderer.rb` と `src-rb/player.rb` が `js` gem 経由で DOM
+を直接操作します。初回ロード時に jsDelivr CDN から ruby.wasm (~3〜5MB gzipped)
+を取得するため、数秒の待機が発生します。
+
+将来的に [mruby](https://mruby.org/) や [PicoRuby](https://github.com/picoruby/picoruby) の WASM
+ビルドへの置き換えを検討中です。
+
 ## 配布物
 
 `deno task build` で生成した `dist/app.js` と、ルートの `index.html` / `app.css` / `poems/`
