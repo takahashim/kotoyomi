@@ -2,25 +2,26 @@ require "js"
 
 module Kotoyomi
   class Player
-    def initialize(track, elements)
+    def initialize(track, elements, audio)
       @track = track
       @elements = elements
+      @audio = audio
       @cues = @track[:cues]
       @cue_count = @cues[:length].to_i
       @current_index = -1
+    end
 
+    def start
       @track[:mode] = "hidden"
       @track.addEventListener("cuechange") { update }
       update
+      self
     end
 
     private
 
     def update
-      active = @track[:activeCues]
-      return if active.nil?
-
-      next_index = active[:length].to_i > 0 ? find_index(active[0]) : -1
+      next_index = active_cue_index
       return if next_index == @current_index
 
       @elements[@current_index].remove_class("active") if @current_index >= 0
@@ -28,17 +29,18 @@ module Kotoyomi
       @elements[next_index].add_class("active") if next_index >= 0
     end
 
-    def find_index(cue)
-      target_ms = ms(cue)
+    # 現在の audio.currentTime に対応する cue の index を返す。
+    # track.activeCues に頼らず、cue の startTime / endTime から決定的に求める
+    # (cuechange の初期発火タイミングの揺れに依存しないため)。
+    def active_cue_index
+      current_ms = (@audio[:currentTime].to_f * 1000).round
       @cue_count.times do |i|
-        return i if ms(@cues[i]) == target_ms
+        cue = @cues[i]
+        start_ms = (cue[:startTime].to_f * 1000).round
+        end_ms = (cue[:endTime].to_f * 1000).round
+        return i if start_ms <= current_ms && current_ms < end_ms
       end
       -1
-    end
-
-    # Float の startTime を ms 単位の Integer に正規化 (VTT 仕様の精度に揃える)。
-    def ms(cue)
-      (cue[:startTime].to_f * 1000).round
     end
   end
 end

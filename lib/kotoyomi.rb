@@ -28,16 +28,20 @@ module Kotoyomi
       cues = track[:cues]
 
       elements = Renderer.new(cues, @poem).render
-      Player.new(track, elements)
+      Player.new(track, elements, @audio).start
 
-      @reset_btn.on(:click) { @audio[:currentTime] = 0 }
-      @audio[:currentTime] = 0
-    rescue Error => err
-      report_error(err)
+      @reset_btn.on(:click) { reset_audio }
+      reset_audio
+    rescue Error => e
+      report_error(e)
       raise
     end
 
     private
+
+    def reset_audio
+      @audio[:currentTime] = 0
+    end
 
     def wait_for_track_load
       ready = @track_el[:readyState].to_i
@@ -51,8 +55,8 @@ module Kotoyomi
           el.addEventListener("error", () => reject(new Error("track load error")), { once: true });
         });
       JS
-    rescue JS::Error => err
-      raise TrackLoadError, err.message
+    rescue JS::Error => e
+      raise TrackLoadError, e.message
     end
 
     def report_error(err)

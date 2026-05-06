@@ -10,12 +10,18 @@ module Kotoyomi
     # 連ごとの Element を生成・追加し、Element の配列を返す。
     def render
       @container.clear
-      stanzas = @cues[:length].to_i.times.map { |i| build_stanza(@cues[i], i) }
+      stanzas = each_cue.with_index.map { |cue, i| build_stanza(cue, i) }
       stanzas.each { |stanza| @container.append(stanza) }
       stanzas
     end
 
     private
+
+    def each_cue
+      return enum_for(:each_cue) unless block_given?
+
+      @cues[:length].to_i.times { |i| yield @cues[i] }
+    end
 
     def build_stanza(cue, index)
       cue_id = cue[:id].to_s
