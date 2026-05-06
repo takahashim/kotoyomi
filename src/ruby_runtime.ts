@@ -5,9 +5,9 @@ const RUBY_WASM_URL =
   `https://cdn.jsdelivr.net/npm/@ruby/3.4-wasm-wasi@${RUBY_WASM_VERSION}/dist/ruby+stdlib.wasm`;
 
 const RUBY_SOURCES = [
-  "src-rb/renderer.rb",
-  "src-rb/player.rb",
-  "src-rb/kotoyomi.rb",
+  "lib/renderer.rb",
+  "lib/player.rb",
+  "lib/kotoyomi.rb",
 ];
 
 type RubyVM = {

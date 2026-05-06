@@ -45,8 +45,8 @@ deno task build     # src/main.ts を dist/app.js にバンドル
 
 ## 配布物
 
-`deno task build` で生成した `dist/app.js` と、ルートの `index.html` / `app.css` / `poems/` /
-`src-rb/` を任意の静的Webサーバーに配置すれば動作します。
+`deno task build` で生成した `dist/app.js` と、ルートの `index.html` / `app.css` / `poems/` / `lib/`
+を任意の静的Webサーバーに配置すれば動作します。
 
 ## 詩テキスト形式
 

@@ -24,7 +24,7 @@
 |---|---|---|
 | WebVTT | 朗読データ | `poems/sample.vtt` |
 | ブラウザ (TextTrack API) | フォーマット解釈と音声同期 | ネイティブ |
-| Ruby (ruby.wasm) | プレイヤー制御・状態遷移・DOM 操作 | `src-rb/*.rb` (`js` gem 経由) |
+| Ruby (ruby.wasm) | プレイヤー制御・状態遷移・DOM 操作 | `lib/*.rb` (`js` gem 経由) |
 | CSS | 視覚効果 (縦書き、中央表示、フェードイン) | `app.css` |
 | JS/TS | ruby.wasm 起動と最小限のホスト | `src/*.ts` |
 
@@ -63,7 +63,7 @@ kotoyomi/
     main.ts            ← ブートストラップ (~15 行)
     ruby_runtime.ts    ← ruby.wasm の VM 起動と Kotoyomi.start 呼び出し
 
-  src-rb/
+  lib/
     kotoyomi.rb        ← アプリのエントリポイント (Kotoyomi::App)
     renderer.rb        ← DOM 生成 (Kotoyomi::Renderer)
     player.rb          ← cuechange ハンドリング・ハイライト (Kotoyomi::Player)
@@ -113,7 +113,7 @@ stanza-2
 
 ### 7.1 `ruby_runtime.ts`
 
-ruby.wasm の動的ロードと、`src-rb/*.rb` の eval、Ruby エントリ呼び出し。
+ruby.wasm の動的ロードと、`lib/*.rb` の eval、Ruby エントリ呼び出し。
 
 ```ts
 export async function bootRuby(): Promise<void>;
@@ -124,7 +124,7 @@ export async function bootRuby(): Promise<void>;
 - `@ruby/wasm-wasi` の `DefaultRubyVM` を CDN (jsDelivr) から動的 import する。
 - `@ruby/3.4-wasm-wasi/dist/ruby+stdlib.wasm` を fetch + `WebAssembly.compileStreaming`。
 - Ruby VM を起動。
-- `src-rb/*.rb` を順序付き (renderer → player → kotoyomi) に fetch して `vm.eval` で評価。
+- `lib/*.rb` を順序付き (renderer → player → kotoyomi) に fetch して `vm.eval` で評価。
 - `vm.evalAsync("Kotoyomi.start")` で Ruby に制御を渡す (`evalAsync` は Ruby 内 `Promise#await` を許容する)。
 
 TS↔Ruby 界面は `Kotoyomi.start` の 1 関数呼び出しのみ。Renderer / Player / App のクラス名は TS から見えない。
@@ -143,7 +143,7 @@ TS↔Ruby 界面は `Kotoyomi.start` の 1 関数呼び出しのみ。Renderer /
 
 ## 8. Ruby エンジン仕様
 
-`src-rb/*.rb` を ruby.wasm 上で実行する。プレイヤーの本体ロジックはこちらに置く。
+`lib/*.rb` を ruby.wasm 上で実行する。プレイヤーの本体ロジックはこちらに置く。
 
 ### 8.1 ランタイム
 
@@ -151,7 +151,7 @@ TS↔Ruby 界面は `Kotoyomi.start` の 1 関数呼び出しのみ。Renderer /
 - jsDelivr CDN から ESM とWASMを動的取得する (vendor 化は将来検討)。
 - ブラウザにおける `js` gem (`require "js"`) を介して DOM を直接操作する。
 
-### 8.2 `src-rb/kotoyomi.rb`
+### 8.2 `lib/kotoyomi.rb`
 
 アプリのエントリポイント。TS が呼ぶ `Kotoyomi.start` は `Kotoyomi::App.new.start` への薄い委譲で、実体は `App` クラスのインスタンスメソッドが持つ。
 
@@ -184,7 +184,7 @@ end
 
 責務: DOM 取得、トラック lifecycle 待機、Renderer/Player のオーケストレーション、UI イベント (reset ボタン)、初期表示確定、エラーハンドリング。`Promise#await` を使うため `vm.evalAsync` で呼び出される。
 
-### 8.3 `src-rb/renderer.rb`
+### 8.3 `lib/renderer.rb`
 
 ```ruby
 module Kotoyomi
@@ -207,7 +207,7 @@ end
 
 `textContent` 経由で本文を挿入し、XSS対策を維持する。1 連分の生成は `build_stanza` に切り出し、`render` は反復のみに専念。
 
-### 8.4 `src-rb/player.rb`
+### 8.4 `lib/player.rb`
 
 ```ruby
 module Kotoyomi
@@ -362,7 +362,7 @@ WebVTTパースとcue同期はブラウザに委ね、Ruby エンジンのDOM操
 
 ### 13.2 ファイル読み込み
 
-- 初期仕様では同梱された `.vtt` と `.mp3`、および `src-rb/*.rb` のみを読み込む。
+- 初期仕様では同梱された `.vtt` と `.mp3`、および `lib/*.rb` のみを読み込む。
 - 任意ファイルアップロード対応は将来拡張とする。
 
 ### 13.3 外部依存
@@ -382,7 +382,7 @@ app.css
 poems/
   sample.vtt
   sample.mp3
-src-rb/
+lib/
   renderer.rb
   player.rb
 ```
