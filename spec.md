@@ -4,9 +4,9 @@
 
 詩のテキストと朗読音声を組み合わせ、Webブラウザ上で縦書き表示しながら、朗読の進行に合わせて現在の連をハイライトするスタンドアローンなページを作成する。
 
-詩テキストの記述・パース・同期にはWeb標準のWebVTTを採用し、ブラウザネイティブの`<track kind="metadata">`に処理を任せる。アプリケーション固有のフォーマットや自前パーサは持たない。
+詩テキストの記述・パース・同期にはWeb標準のWebVTTを採用し、ブラウザネイティブの`<track kind="metadata">`に処理を任せる。プレイヤー制御と DOM 操作は ruby.wasm 上の Ruby が担い、JS/TS は ruby.wasm の起動と最小限のホストだけを担当する。
 
-開発時はDeno / TypeScriptを使用し、ブラウザ配布物ではTypeScriptをJavaScriptに変換して実行する。実験的に ruby.wasm を用いた Ruby 版エンジンを併設し、最終的には Ruby を主役の制御層として位置付ける構成を目指す。
+開発時はDeno / TypeScriptを使用し、ブラウザ配布物では TypeScript をビルドした JavaScript と Ruby ソースを配信する。
 
 ## 2. 基本方針
 
@@ -16,43 +16,26 @@
 - ブラウザ配布物ではTypeScriptをJavaScriptに変換して実行する。
 - サーバーサイド処理は前提としない。
 - 最終成果物は静的ファイルのみで動作するスタンドアローンなWebページとする。
+- 実行時にブラウザが jsDelivr CDN から ruby.wasm 配布物を取得できることを前提とする (将来オフライン対応する際は vendor 化)。
 
 ### 2.2 役割分担
 
-#### ブラウザ側 (HTML / WebVTT API)
+| 層 | 役割 | 物理的な実装場所 |
+|---|---|---|
+| WebVTT | 朗読データ | `poems/sample.vtt` |
+| ブラウザ (TextTrack API) | フォーマット解釈と音声同期 | ネイティブ |
+| Ruby (ruby.wasm) | プレイヤー制御・状態遷移・DOM 操作 | `src-rb/*.rb` (`js` gem 経由) |
+| CSS | 視覚効果 (縦書き、中央表示、フェードイン) | `app.css` |
+| JS/TS | ruby.wasm 起動と最小限のホスト | `src/*.ts` |
 
-- WebVTTファイルのロードとパース
-- cueと音声の同期 (`cuechange`イベント、`activeCues`)
-- 音声再生制御 (`<audio>`要素)
-
-#### TypeScript / JavaScript 側
-
-- DOM要素の取得とエンジン dispatcher (URL クエリで TS / Ruby 切替)
-- TS エンジン: cue情報からの本文DOM生成と `cuechange` ハイライト付け替え
-- ruby.wasm のロードとブートストラップ
-- ロードエラーのユーザー向け表示
-
-#### Ruby エンジン (オプション、`?engine=ruby`)
-
-- `js` gem 経由の DOM 生成 (renderer)
-- `cuechange` イベント購読とハイライト付け替え (player)
-
-#### CSS
-
-- 縦書き・中央表示・ハイライトなどの視覚効果
-
-### 2.3 役割の長期方針
-
-最終的には次の役割分担に寄せていく:
-
-| 層 | 役割 |
-|---|---|
-| WebVTT | 朗読データ |
-| Ruby | プレイヤー制御・状態遷移・DOM 操作 |
-| CSS | 視覚効果 |
-| JS/TS | ruby.wasm 起動・最小限のホスト |
-
-現状の TS/Ruby 併存はこの最終形態への過渡形態として位置付ける。
+JS/TS 側は次の役割に専念する:
+- DOM 要素の取得
+- WebVTT トラックのロード待機
+- 音声 URL のセット
+- 「最初に戻る」ボタンのハンドリング (`audio.currentTime = 0`)
+- ruby.wasm のロードと Ruby ソースの eval
+- Ruby 側エントリポイントの呼び出し
+- ロードエラー時の表示
 
 ## 3. アーキテクチャ
 
@@ -63,9 +46,7 @@ poems/sample.vtt (WebVTT)
         ↓
 TextTrack.cues / cuechange イベント
         ↓
-URL ?engine 分岐
-   ├─ ts   → TypeScript レンダラ + プレイヤー
-   └─ ruby → ruby.wasm 上の Kotoyomi::Renderer + Kotoyomi::Player
+ruby.wasm 上の Kotoyomi::Renderer + Kotoyomi::Player
         ↓
 HTML / CSS / DOM
 ```
@@ -79,22 +60,20 @@ kotoyomi/
   deno.json
 
   src/
-    main.ts            ← ブートストラップ・エンジン dispatcher
-    types.ts
-    renderer.ts        ← TS エンジン
-    player.ts          ← TS エンジン
-    ruby_engine.ts     ← Ruby エンジンのロード・グルー
+    main.ts            ← ブートストラップ、トラックロード、Ruby 起動
+    types.ts           ← Cue 型 (TS↔Ruby 受け渡し用)
+    ruby_engine.ts     ← ruby.wasm のロードと Ruby 側エントリ呼び出し
 
   src-rb/
-    renderer.rb        ← Ruby エンジン
-    player.rb          ← Ruby エンジン
+    renderer.rb        ← DOM 生成
+    player.rb          ← cuechange ハンドリング・ハイライト
 
   poems/
     sample.vtt
     sample.mp3
 
   dist/
-    app.js
+    app.js             ← src/*.ts のバンドル成果物
 ```
 
 ## 5. 詩テキスト形式
@@ -130,7 +109,7 @@ stanza-2
 
 ### 6.1 Cue
 
-レンダラとプレイヤーが共通に扱う薄い構造的型。`VTTCue` の必要なサブセットを表す。
+JS 側から Ruby へ受け渡す薄い構造的型。`VTTCue` の必要なサブセットを表す。
 
 ```ts
 export type Cue = {
@@ -140,7 +119,7 @@ export type Cue = {
 };
 ```
 
-`VTTCue` から `{ id, startTime, text }` を抜き出すことで生成する。
+`VTTCue` から `{ id, startTime, text }` を抜き出し、`vm.wrap()` で Ruby 側に渡す。
 
 ## 7. TypeScriptモジュール仕様
 
@@ -148,60 +127,7 @@ export type Cue = {
 
 `Cue` 型を提供する。
 
-### 7.2 `renderer.ts`
-
-詩本文をDOMとして描画する (TS エンジン)。
-
-```ts
-export function renderPoem(
-  cues: Cue[],
-  container: HTMLElement
-): HTMLElement[];
-```
-
-責務:
-
-- `container` の中身を初期化する。
-- 各cueから`<div class="stanza">`を生成し、内側に各本文行ぶんの`<p class="stanza-line">`を生成する。
-- `<div>`には`id`、`class="stanza"`、`data-start-time`を付与する。
-- 本文は`textContent`として挿入する (XSS対策)。
-- 生成した連要素の配列を返す。
-
-生成されるDOM例:
-
-```html
-<div id="poem" class="poem">
-  <div id="stanza-1" class="stanza" data-start-time="0">
-    <p class="stanza-line">春の夜に</p>
-    <p class="stanza-line">静かに雨が降る</p>
-  </div>
-</div>
-```
-
-### 7.3 `player.ts`
-
-`TextTrack`の`cuechange`イベントを購読し、現在のcueに対応するDOM要素のハイライトを管理する (TS エンジン)。
-
-```ts
-export class PoemPlayer {
-  constructor(params: {
-    track: TextTrack;
-    elements: HTMLElement[];
-  });
-}
-```
-
-責務:
-
-- `track.mode = "hidden"` を設定して `cuechange` イベントを有効化する。
-- `cuechange` イベントを購読する。
-- `track.activeCues[0]` から現在のcueを取得し、対応する要素を `cues.indexOf(cue)` で求める。
-- 現在の連が変化した場合のみDOM更新を行う (古い`active`を外して新規付与)。
-- `dispose()` でイベントリスナを解除する。
-
-`requestAnimationFrame` ループや `audio.currentTime` の監視は行わない (ブラウザがcue管理を行うため)。
-
-### 7.4 `ruby_engine.ts`
+### 7.2 `ruby_engine.ts`
 
 ruby.wasm の動的ロードと、`src-rb/*.rb` の eval、TS↔Ruby のグルーを提供する。
 
@@ -223,24 +149,23 @@ export async function startRubyEngine(params: {
 
 ruby.wasm 配布物の取得失敗時は呼び出し元に例外を投げる。
 
-### 7.5 `main.ts`
+### 7.3 `main.ts`
 
-アプリケーションのエントリポイント、エンジン dispatcher。
+アプリケーションのエントリポイント。
 
 責務:
 
-- `<audio>`、`<track>`、`#poem`、`#error` のDOM要素を取得する。
+- `<audio>`、`<track>`、`#poem`、`#error`、`#reset` のDOM要素を取得する。
 - `<audio>` に音声URLを設定する。
+- 「最初に戻る」ボタンのクリックで `audio.currentTime = 0` に。
 - `<track>` の `load` イベントを待つ (`readyState === 2` で即解決)。
 - `track.cues` から `Cue[]` を生成する。
-- URL クエリ `engine` を読み:
-  - `ts` (既定) なら `renderPoem` + `new PoemPlayer`
-  - `ruby` なら `startRubyEngine` を呼ぶ
+- `startRubyEngine` を呼ぶ。
 - ロード失敗時は `#error` にメッセージを表示する。
 
-## 8. Ruby エンジン仕様 (オプション)
+## 8. Ruby エンジン仕様
 
-`?engine=ruby` 指定時に動作する代替エンジン。`src-rb/*.rb` を ruby.wasm 上で実行する。
+`src-rb/*.rb` を ruby.wasm 上で実行する。プレイヤーの本体ロジックはこちらに置く。
 
 ### 8.1 ランタイム
 
@@ -261,7 +186,7 @@ module Kotoyomi
 end
 ```
 
-責務は TS 版 `renderer.ts` と等価。`textContent` 経由で本文を挿入し、XSS対策を維持する。
+`textContent` 経由で本文を挿入し、XSS対策を維持する。
 
 ### 8.3 `src-rb/player.rb`
 
@@ -276,7 +201,7 @@ module Kotoyomi
 end
 ```
 
-責務は TS 版 `player.ts` と等価。`cuechange` イベントだけで動作する。
+`cuechange` イベントだけで動作する。現在の cue 特定は `cue.startTime` を用いた線形探索 (`js` gem で `Function.prototype.call` 越しの indexOf を呼ぶより素直なため)。
 
 ### 8.4 ランタイム互換性
 
@@ -296,32 +221,32 @@ end
     <track id="track" kind="metadata" src="poems/sample.vtt" default />
   </audio>
 
+  <div class="controls">
+    <button id="reset" type="button">最初に戻る</button>
+  </div>
+
   <p id="error" class="error" hidden></p>
 </main>
 ```
 
 ### 9.2 縦書き表示
 
-詩本文はCSSで縦書き表示する。現在の連のみを中央に表示する。
+詩本文はCSSで縦書き表示する。現在の連のみを上方寄せ・水平中央で表示する。
 
 ```css
 .poem-viewport {
   height: 80vh;
   display: flex;
-  align-items: center;
+  align-items: flex-start;
   justify-content: center;
+  padding-top: 2rem;
+  box-sizing: border-box;
   overflow: hidden;
 }
 
 .poem {
   writing-mode: vertical-rl;
   text-orientation: mixed;
-  line-height: 2.2;
-  font-size: 28px;
-  letter-spacing: 0.08em;
-  display: flex;
-  align-items: center;
-  justify-content: center;
 }
 
 .stanza {
@@ -334,18 +259,30 @@ end
   align-items: center;
   gap: 0.4em;
   font-weight: 600;
+  animation: stanza-fade-in 2s ease-out;
 }
 
 .stanza-line {
   margin: 0;
 }
+
+@keyframes stanza-fade-in {
+  from { opacity: 0; }
+  to   { opacity: 1; }
+}
 ```
 
-### 9.3 ハイライト
+### 9.3 ハイライトと演出
 
 - 現在の連のみに `active` クラスを付与する。
 - それ以外の連は `display: none` で非表示。
+- アクティブになった瞬間に CSS アニメーションで 2 秒のフェードインを適用する。
 - 初期仕様では1連のみをactiveにする。
+
+### 9.4 操作
+
+- `<audio controls>` の再生・停止・シーク。
+- 「最初に戻る」ボタン: `audio.currentTime = 0`。再生状態は維持する (再生中なら継続、停止中なら停止のまま位置だけ巻き戻る)。
 
 ## 10. 音声仕様
 
@@ -357,20 +294,22 @@ end
 
 ### 10.2 同期方法
 
-ブラウザの `TextTrack` API が同期を担当する。アプリ側は `cuechange` イベントを受けて、`track.activeCues[0]` を現在の連として表示する。
+ブラウザの `TextTrack` API が同期を担当する。Ruby 側は `cuechange` イベントを受けて、`track.activeCues[0]` を現在の連として表示する。
 
 ## 11. エラー仕様
 
 ### 11.1 ロードエラー
 
-- `<track>` 要素の `error` イベントが発生した場合 (VTTファイルの取得失敗、パース失敗) に画面上にメッセージを表示する。
-- `?engine=ruby` で ruby.wasm またはRubyソースの取得に失敗した場合も同様。
+- `<track>` 要素の `error` イベント (VTTファイルの取得失敗、パース失敗)
+- ruby.wasm またはRubyソースの取得・eval 失敗
+
+いずれの場合も画面上にメッセージを表示する。
 
 ### 11.2 表示方法
 
 - エラーはコンソールに出力する。
 - `#error` 要素の `textContent` に簡潔なメッセージを設定し `hidden` を外す。
-- エラー時は `PoemPlayer` を初期化しない。
+- エラー時は Ruby エンジンの起動を完遂しない。
 
 ## 12. Deno開発仕様
 
@@ -379,7 +318,7 @@ end
 ```json
 {
   "tasks": {
-    "check": "deno check src/main.ts src/types.ts src/renderer.ts src/player.ts src/ruby_engine.ts",
+    "check": "deno check src/main.ts src/types.ts src/ruby_engine.ts",
     "lint": "deno lint",
     "fmt": "deno fmt",
     "serve": "deno run --allow-net --allow-read jsr:@std/http/file-server",
@@ -396,7 +335,7 @@ WebVTTパースとcue同期はブラウザに委ね、Ruby エンジンのDOM操
 
 ### 13.1 HTML挿入
 
-- cue本文は `innerHTML` ではなく `textContent` で挿入する (TS / Ruby とも)。
+- cue本文は `innerHTML` ではなく `textContent` で挿入する (Ruby 側も同様)。
 - WebVTTのインラインタグも本実装では平文として扱う。
 
 ### 13.2 ファイル読み込み
@@ -406,8 +345,8 @@ WebVTTパースとcue同期はブラウザに委ね、Ruby エンジンのDOM操
 
 ### 13.3 外部依存
 
-- `?engine=ruby` 指定時のみ jsDelivr CDN から ruby.wasm 配布物を取得する。
-- TS エンジンは外部ネットワークアクセスなしで完結する。
+- 起動時に jsDelivr CDN から ruby.wasm 配布物 (`@ruby/wasm-wasi` と `@ruby/3.4-wasm-wasi`) を取得する。
+- これは設計上避けられない外部依存。完全オフライン化する際は vendor/ に取り込む。
 
 ## 14. スタンドアローン配布仕様
 
@@ -428,7 +367,7 @@ src-rb/
 
 ### 14.2 実行方法
 
-任意の静的Webサーバー上で実行する。同一オリジンであることが前提。
+任意の静的Webサーバー上で実行する。同一オリジンであることが前提。ruby.wasm 配布物は実行時に CDN から取得する。
 
 ローカル開発時は以下で起動する。
 
@@ -438,7 +377,7 @@ deno task serve
 
 ### 14.3 完全オフライン対応
 
-将来的にPWA化する場合は `manifest.json` と `service-worker.js` を追加し、対象ファイルをキャッシュする。Ruby エンジンを完全オフライン化する場合は ruby.wasm 配布物も vendor/ に取り込む。
+将来的にPWA化する場合は `manifest.json` と `service-worker.js` を追加し、対象ファイル (ruby.wasm 配布物含む) をキャッシュする。
 
 ## 15. 非目標
 
@@ -466,55 +405,16 @@ deno task serve
 - PWA化 (ruby.wasm の vendor 化を含む)
 - 複数作品切り替え
 - テーマ切り替え
-- 手動スクロール中の自動スクロール一時停止
 - 音声波形表示
 - 同期マーカー編集UI
 - WebVTTのインラインタグ対応 (`<v>` で話者識別 等)
 - WebVTT timestampタグによる逐字同期
 - mruby.wasm / PicoRuby.wasm への置き換え
 - `js` gem 抽象化レイヤーの導入 (ランタイム差し替えに備えた DOM 操作 DSL)
-- TS エンジンを撤去して Ruby を主役とする最終形態への移行
 
-## 17. 初期実装の優先順位
+## 17. 基本方針の要約
 
-### Phase 1: WebVTTベースのプロトタイプ
-
-- `<track kind="metadata">` でVTTをロード
-- `Cue` 型定義
-- `renderPoem()` 実装
-- `PoemPlayer` (`cuechange` 駆動) 実装
-- 縦書きCSS
-- サンプル音声との同期確認
-
-### Phase 2: Deno開発ツール整備
-
-- `deno check`
-- `deno lint`
-- `deno fmt`
-- `deno bundle` によるバンドル
-
-### Phase 3: 表示体験の調整
-
-- ハイライト表現調整
-- フォントサイズ・行間調整
-- 縦書き時の表示崩れ確認
-
-### Phase 4: Ruby エンジン併設
-
-- ruby.wasm の動的ロード
-- `src-rb/renderer.rb`、`src-rb/player.rb` 実装
-- URL クエリによる engine 切替
-- TS 版とのリグレッション比較
-
-### Phase 5: 軽量 Ruby ランタイムへの移行検討
-
-- mruby.wasm / PicoRuby.wasm の評価
-- `js` gem 抽象化レイヤーの設計
-- TS エンジン撤去のタイミング判断
-
-## 18. 基本方針の要約
-
-このアプリは、フォーマット解釈と同期処理をブラウザ標準 (WebVTT API) に委ね、アプリケーション層は最小限の仕事だけを担う。その「最小限」を TS で書く版と Ruby で書く版を併設し、最終的には Ruby を主役の制御層として置く形を目指す。
+このアプリは、フォーマット解釈と同期処理をブラウザ標準 (WebVTT API) に委ね、プレイヤー制御を ruby.wasm 上の Ruby に委ねる。JS/TS は ruby.wasm を起動するためだけのホストに留まる。
 
 ```text
 WebVTT:
@@ -526,11 +426,11 @@ WebVTT:
 CSS:
   視覚効果を担当する
 
-Ruby (将来的に主役):
+Ruby (ruby.wasm):
   プレイヤー制御・状態遷移・DOM 操作を担当する
 
 JS/TS:
   ruby.wasm 起動と最小限のホストを担当する
 ```
 
-この分担により、自前実装を最小限に保ちつつ、字幕系ツール (Aegisubなど) との互換性、および ruby.wasm エコシステムでの実験を両立する。
+この分担により、字幕系ツール (Aegisubなど) との互換性を得つつ、アプリケーションロジックを Ruby で記述できる。将来の mruby/PicoRuby への移行も Ruby 側のコードを差し替えるだけで完結する見込み。
