@@ -29,11 +29,16 @@ module Kotoyomi
     end
 
     def find_index(cue)
-      start = cue[:startTime].to_f
+      target_ms = ms(cue)
       @cue_count.times do |i|
-        return i if @cues[i][:startTime].to_f == start
+        return i if ms(@cues[i]) == target_ms
       end
       -1
+    end
+
+    # Float の startTime を ms 単位の Integer に正規化 (VTT 仕様の精度に揃える)。
+    def ms(cue)
+      (cue[:startTime].to_f * 1000).round
     end
   end
 end
