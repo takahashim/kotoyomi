@@ -1,6 +1,3 @@
-# Build output (regenerable via `deno task build`)
-/dist/
-
 # Claude Code local settings
 .claude/settings.local.json
 

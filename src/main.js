@@ -1,11 +1,11 @@
-import { bootRuby } from "./ruby_runtime.ts";
+import { bootRuby } from "./ruby_runtime.js";
 
-async function main(): Promise<void> {
+async function main() {
   try {
     await bootRuby();
   } catch (err) {
     console.error(err);
-    const errorEl = document.getElementById("error") as HTMLElement | null;
+    const errorEl = document.getElementById("error");
     if (errorEl) {
       errorEl.textContent = `起動に失敗しました。\n${
         err instanceof Error ? err.message : String(err)
@@ -16,7 +16,7 @@ async function main(): Promise<void> {
 }
 
 if (document.readyState === "loading") {
-  document.addEventListener("DOMContentLoaded", () => void main());
+  document.addEventListener("DOMContentLoaded", () => main());
 } else {
-  void main();
+  main();
 }

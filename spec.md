@@ -4,19 +4,19 @@
 
 詩のテキストと朗読音声を組み合わせ、Webブラウザ上で縦書き表示しながら、朗読の進行に合わせて現在の連をハイライトするスタンドアローンなページを作成する。
 
-詩テキストの記述・パース・同期にはWeb標準のWebVTTを採用し、ブラウザネイティブの`<track kind="metadata">`に処理を任せる。プレイヤー制御と DOM 操作は ruby.wasm 上の Ruby が担い、JS/TS は ruby.wasm の起動と最小限のホストだけを担当する。
+詩テキストの記述・パース・同期にはWeb標準のWebVTTを採用し、ブラウザネイティブの`<track kind="metadata">`に処理を任せる。プレイヤー制御と DOM 操作は ruby.wasm 上の Ruby が担い、JS は ruby.wasm の起動と最小限のホストだけを担当する。
 
-開発時はDeno / TypeScriptを使用し、ブラウザ配布物では TypeScript をビルドした JavaScript と Ruby ソースを配信する。
+JS 側は ES Modules で書き、ブラウザにそのまま読み込ませる。バンドラもビルド工程も持たない。
 
 ## 2. 基本方針
 
 ### 2.1 実行環境
 
-- 開発時はDeno / TypeScriptを使用する。
-- ブラウザ配布物ではTypeScriptをJavaScriptに変換して実行する。
+- JS は ES Modules で記述し、ブラウザがそのまま読み込む (バンドル不要)。
 - サーバーサイド処理は前提としない。
 - 最終成果物は静的ファイルのみで動作するスタンドアローンなWebページとする。
 - 実行時にブラウザが jsDelivr CDN から ruby.wasm 配布物を取得できることを前提とする (将来オフライン対応する際は vendor 化)。
+- ローカル動作確認には任意の静的 HTTP サーバを利用する (例: `ruby -run -e httpd . -p 8000`)。
 
 ### 2.2 役割分担
 
@@ -26,9 +26,9 @@
 | ブラウザ (TextTrack API) | フォーマット解釈と音声同期 | ネイティブ |
 | Ruby (ruby.wasm) | プレイヤー制御・状態遷移・DOM 操作 | `lib/*.rb` (`js` gem 経由) |
 | CSS | 視覚効果 (縦書き、中央表示、フェードイン) | `app.css` |
-| JS/TS | ruby.wasm 起動と最小限のホスト | `src/*.ts` |
+| JS | ruby.wasm 起動と最小限のホスト | `src/*.js` |
 
-JS/TS 側は次の役割に専念する:
+JS 側は次の役割に専念する:
 - DOM 要素の取得
 - WebVTT トラックのロード待機
 - 音声 URL のセット
@@ -57,11 +57,10 @@ HTML / CSS / DOM
 kotoyomi/
   index.html
   app.css
-  deno.json
 
   src/
-    main.ts            ← ブートストラップ (~15 行)
-    ruby_runtime.ts    ← ruby.wasm の VM 起動と Kotoyomi.start 呼び出し
+    main.js            ← ブートストラップ (~15 行)
+    ruby_runtime.js    ← ruby.wasm の VM 起動と Kotoyomi.start 呼び出し
 
   lib/
     dom.rb             ← DOM 操作ラッパー (Kotoyomi::DOM, Kotoyomi::Element)
@@ -72,10 +71,9 @@ kotoyomi/
   poems/
     sample.vtt
     sample.mp3
-
-  dist/
-    app.js             ← src/*.ts のバンドル成果物
 ```
+
+ビルド成果物 (`dist/` 等) は持たない。`src/*.js` をブラウザがそのまま ES Modules として読み込む。
 
 ## 5. 詩テキスト形式
 
@@ -110,14 +108,14 @@ stanza-2
 
 専用のデータ転送型は持たない。Ruby 側は `VTTCue` (`TextTrackCueList` の要素) を `js` gem 経由で直接扱い、`cue[:id]` / `cue[:startTime]` / `cue[:text]` でプロパティにアクセスする。
 
-## 7. TypeScriptモジュール仕様
+## 7. JavaScript モジュール仕様
 
-### 7.1 `ruby_runtime.ts`
+### 7.1 `ruby_runtime.js`
 
 ruby.wasm の動的ロードと、`lib/*.rb` の eval、Ruby エントリ呼び出し。
 
-```ts
-export async function bootRuby(): Promise<void>;
+```js
+export async function bootRuby();
 ```
 
 責務:
@@ -128,9 +126,9 @@ export async function bootRuby(): Promise<void>;
 - `lib/*.rb` を順序付き (dom → renderer → player → kotoyomi) に fetch して `vm.eval` で評価。
 - `vm.evalAsync("Kotoyomi.start")` で Ruby に制御を渡す (`evalAsync` は Ruby 内 `Promise#await` を許容する)。
 
-TS↔Ruby 界面は `Kotoyomi.start` の 1 関数呼び出しのみ。Renderer / Player / App のクラス名は TS から見えない。
+JS↔Ruby 界面は `Kotoyomi.start` の 1 関数呼び出しのみ。Renderer / Player / App のクラス名は JS から見えない。
 
-### 7.2 `main.ts`
+### 7.2 `main.js`
 
 アプリケーションのエントリポイント、薄いブートストラップ。
 
@@ -138,7 +136,7 @@ TS↔Ruby 界面は `Kotoyomi.start` の 1 関数呼び出しのみ。Renderer /
 
 - DOM 待機 (`DOMContentLoaded`)。
 - `bootRuby()` 呼び出し。
-- ruby.wasm 起動が失敗した場合のみ `#error` にメッセージを表示する (Ruby が動き始める前のエラーは TS でしか拾えないため)。
+- ruby.wasm 起動が失敗した場合のみ `#error` にメッセージを表示する (Ruby が動き始める前のエラーは JS でしか拾えないため)。
 
 それ以外のアプリ制御は全て Ruby に委ねる。
 
@@ -179,7 +177,7 @@ end
 
 ### 8.3 `lib/kotoyomi.rb`
 
-アプリのエントリポイント。TS が呼ぶ `Kotoyomi.start` は `Kotoyomi::App.new.start` への薄い委譲で、実体は `App` クラスのインスタンスメソッドが持つ。
+アプリのエントリポイント。JS が呼ぶ `Kotoyomi.start` は `Kotoyomi::App.new.start` への薄い委譲で、実体は `App` クラスのインスタンスメソッドが持つ。
 
 ```ruby
 module Kotoyomi
@@ -363,29 +361,26 @@ end
 - エラーはコンソールに出力する。
 - `#error` 要素の `textContent` に簡潔なメッセージを設定し `hidden` を外す。
 - 表示の責務はエラー発生箇所による:
-  - ruby.wasm 起動前 (TS 段階) のエラー → `src/main.ts` が表示
+  - ruby.wasm 起動前 (JS 段階) のエラー → `src/main.js` が表示
   - Ruby 起動後のエラー → `Kotoyomi::App#start` の `rescue` 節が表示し再 raise
 - エラー時は Kotoyomi の起動を完遂しない。
 
-## 12. Deno開発仕様
+## 12. 開発環境
 
-### 12.1 `deno.json`
+### 12.1 ローカル動作確認
 
-```json
-{
-  "tasks": {
-    "check": "deno check src/main.ts src/ruby_runtime.ts",
-    "lint": "deno lint",
-    "fmt": "deno fmt",
-    "serve": "deno run --allow-net --allow-read jsr:@std/http/file-server",
-    "build": "deno bundle src/main.ts -o dist/app.js"
-  }
-}
+ビルドステップは存在しない。Ruby 標準の WEBrick を使った簡易サーバで起動する (Ruby 3.0+ では `webrick` gem の追加インストールが必要)。
+
+```bash
+gem install webrick           # 初回のみ
+ruby -run -e httpd -- -p 8000 .
 ```
+
+ブラウザで `http://localhost:8000/` を開けばそのまま動く。任意の他の静的サーバ (Python の `python3 -m http.server` 等) でも代替可。
 
 ### 12.2 単体テスト
 
-WebVTTパースとcue同期はブラウザに委ね、Ruby エンジンのDOM操作は ruby.wasm/ブラウザに依存するため、Deno上での単体テストは置かない。`deno task check` で型整合を、ブラウザでの実行で挙動を検証する。
+WebVTTパースとcue同期はブラウザに委ね、Ruby エンジンのDOM操作は ruby.wasm/ブラウザに依存するため、自動テストは置かない。ブラウザでの実行で挙動を検証する。
 
 ## 13. セキュリティ・安全性
 
@@ -409,27 +404,28 @@ WebVTTパースとcue同期はブラウザに委ね、Ruby エンジンのDOM操
 ### 14.1 配布物
 
 ```text
-dist/
-  app.js
 index.html
 app.css
+src/
+  main.js
+  ruby_runtime.js
+lib/
+  dom.rb
+  kotoyomi.rb
+  renderer.rb
+  player.rb
 poems/
   sample.vtt
   sample.mp3
-lib/
-  renderer.rb
-  player.rb
 ```
+
+ビルド成果物は無し。これらの静的ファイルをそのまま配信する。
 
 ### 14.2 実行方法
 
 任意の静的Webサーバー上で実行する。同一オリジンであることが前提。ruby.wasm 配布物は実行時に CDN から取得する。
 
-ローカル開発時は以下で起動する。
-
-```bash
-deno task serve
-```
+ローカル開発時は静的サーバを立ち上げる (詳細は §12.1)。
 
 ### 14.3 完全オフライン対応
 
@@ -470,7 +466,7 @@ deno task serve
 
 ## 17. 基本方針の要約
 
-このアプリは、フォーマット解釈と同期処理をブラウザ標準 (WebVTT API) に委ね、プレイヤー制御を ruby.wasm 上の Ruby に委ねる。JS/TS は ruby.wasm を起動するためだけのホストに留まる。
+このアプリは、フォーマット解釈と同期処理をブラウザ標準 (WebVTT API) に委ね、プレイヤー制御を ruby.wasm 上の Ruby に委ねる。JS は ruby.wasm を起動するためだけのホストに留まる。
 
 ```text
 WebVTT:
@@ -485,7 +481,7 @@ CSS:
 Ruby (ruby.wasm):
   プレイヤー制御・状態遷移・DOM 操作を担当する
 
-JS/TS:
+JS:
   ruby.wasm 起動と最小限のホストを担当する
 ```
 

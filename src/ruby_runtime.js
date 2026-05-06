@@ -11,18 +11,9 @@ const RUBY_SOURCES = [
   "lib/kotoyomi.rb",
 ];
 
-type RubyVM = {
-  eval(code: string): unknown;
-  evalAsync(code: string): Promise<unknown>;
-};
-
-type DefaultRubyVM = (
-  module: WebAssembly.Module,
-) => Promise<{ vm: RubyVM }>;
-
-export async function bootRuby(): Promise<void> {
+export async function bootRuby() {
   const [{ DefaultRubyVM }, wasmResponse] = await Promise.all([
-    import(BROWSER_ESM_URL) as Promise<{ DefaultRubyVM: DefaultRubyVM }>,
+    import(BROWSER_ESM_URL),
     fetch(RUBY_WASM_URL),
   ]);
   if (!wasmResponse.ok) {
