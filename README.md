@@ -1,6 +1,6 @@
 # Kotoyomi
 
-縦書きで詩本文を表示し、朗読音声と同期して現在の連をハイライトするスタンドアローンなWebプレイヤー。
+縦書きで文章を表示し、朗読音声と同期して現在の段落テキストをハイライトするスタンドアローンなWebプレイヤー。
 
 朗読データは [WebVTT](https://developer.mozilla.org/ja/docs/Web/API/WebVTT_API)
 に格納し、ブラウザ標準の `<track kind="metadata">` でロード・パース・同期する。プレイヤー制御と DOM
@@ -38,7 +38,7 @@ deno task build     # src/main.ts を dist/app.js にバンドル
 1. `deno task build` でブラウザ用のJSをバンドル。
 2. `deno task serve` を実行し、ブラウザで `http://localhost:8000/` を開く。
 3. 初回は ruby.wasm (~3〜5MB gzipped) を CDN から取得するため数秒待つ。
-4. `<audio>` の再生ボタンを押すと、現在の連が中央でフェードインしながらハイライトされます。
+4. `<audio>` の再生ボタンを押すと、現在の段落が中央でフェードインしながらハイライトされます。
 5. 「最初に戻る」ボタンで音声と表示を冒頭に戻せます。
 
 サンプル朗読音声 (`poems/sample.mp3`) と WebVTT 字幕 (`poems/sample.vtt`) は同梱されています。
@@ -48,9 +48,9 @@ deno task build     # src/main.ts を dist/app.js にバンドル
 `deno task build` で生成した `dist/app.js` と、ルートの `index.html` / `app.css` / `poems/` / `lib/`
 を任意の静的Webサーバーに配置すれば動作します。
 
-## 詩テキスト形式
+## 本文テキスト形式
 
-[WebVTT](https://www.w3.org/TR/webvtt1/) 準拠。各 cue が 1 つの連に対応する。cue 識別子を付けると
+[WebVTT](https://www.w3.org/TR/webvtt1/) 準拠。各 cue が 1 つの段落に対応する。cue 識別子を付けると
 DOM の `id` として再利用される。
 
 ```
