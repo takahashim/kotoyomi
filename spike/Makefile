@@ -29,7 +29,7 @@ CLANG := $(WASI_SDK_DIR)/bin/clang
 SYSROOT := $(WASI_SDK_DIR)/share/wasi-sysroot
 TARGET := wasm32-wasip1
 
-.PHONY: all download wasi-sdk mruby link serve clean distclean
+.PHONY: all download wasi-sdk mruby link serve test clean distclean
 
 all: link
 
@@ -84,6 +84,9 @@ serve:
 	cd $(CURDIR) && ruby -run -e httpd . -p 8001
 	# Open http://localhost:8001/host/sample/ for the kotoyomi sample,
 	# or http://localhost:8001/host/ for the spike test landing page.
+
+test: link
+	node test/runner.mjs
 
 clean:
 	rm -rf $(MRUBY_DIR)/build/wasi

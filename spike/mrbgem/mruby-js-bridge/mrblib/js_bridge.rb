@@ -12,6 +12,12 @@
 #   doc.call(:getElementById, "audio")
 
 module JSBridge
+  # Ivars on the JSBridge module itself (not its singleton class) — must
+  # be initialised here in module body so the class-method readers below
+  # see the same object.
+  @await_fibers = {}
+  @await_next_id = 0
+
   class << self
     def global
       Value.new(_global)
@@ -90,6 +96,29 @@ module JSBridge
     # a Promise .then callback (see Value#await).
     def __run_in_fiber__(&block)
       ::Fiber.new(&block).resume
+    end
+
+    # Internal fiber registry for await. Maps id → Fiber. The .then /
+    # .catch callbacks Value#await registers capture only the integer id
+    # (not the Fiber itself), so once we delete the entry here, the
+    # Fiber becomes eligible for GC. Without this, dead-fiber references
+    # leaked through callback closures cause GC mark crashes when their
+    # internal stacks have been torn down.
+    # (Ivar storage is on the JSBridge module — see top of file.)
+
+    def __register_await_fiber__(fiber)
+      id = (@await_next_id += 1)
+      @await_fibers[id] = fiber
+      id
+    end
+
+    # Resume the fiber registered with `id`. Removes it from the registry
+    # so the second of the (then-onFulfilled, then-onRejected) pair becomes
+    # a no-op once the first has fired.
+    def __resume_await_fiber__(id, status_value)
+      fiber = @await_fibers.delete(id)
+      return if fiber.nil? || !fiber.alive?
+      fiber.resume(status_value)
     end
   end
 
@@ -187,11 +216,17 @@ module JSBridge
     # built on Fiber instead of Asyncify. Stack frames across the await
     # boundary are split (the post-await continuation runs from a
     # different host re-entry).
+    #
+    # Implementation note: the .then/.catch callbacks intentionally
+    # capture only an integer fid (registered in JSBridge's fiber table),
+    # not the Fiber itself. The C-side callback table never reclaims
+    # entries, so closing over a Fiber would keep its (post-termination,
+    # potentially torn-down) state alive and crash the GC mark phase.
     def await
-      fiber = ::Fiber.current
+      fid = ::JSBridge.__register_await_fiber__(::Fiber.current)
       call(:then,
-        ::JSBridge.callback { |val| fiber.resume([:ok, val]) if fiber.alive? },
-        ::JSBridge.callback { |err| fiber.resume([:error, err]) if fiber.alive? })
+        ::JSBridge.callback { |val| ::JSBridge.__resume_await_fiber__(fid, [:ok, val]) },
+        ::JSBridge.callback { |err| ::JSBridge.__resume_await_fiber__(fid, [:error, err]) })
       status, value =
         begin
           ::Fiber.yield
