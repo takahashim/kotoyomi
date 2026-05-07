@@ -53,27 +53,34 @@ HTML / CSS / DOM
 
 ## 4. ディレクトリ構成
 
+ツール本体 (root の `app.css` / `src/` / `lib/`) と、それを使うコンテンツ (`works/<作品名>/`) を分離する。
+
 ```text
 kotoyomi/
-  index.html
-  app.css
+  index.html         ← ランディング/説明ページ (ツールの紹介、デモへのリンク、最小テンプレ)
+  app.css            ← ツール本体 (CSS)
 
-  src/
-    main.js            ← ブートストラップ (~15 行)
-    ruby_runtime.js    ← ruby.wasm の VM 起動と Kotoyomi.start 呼び出し
+  src/               ← ツール本体 (JS)
+    main.js          ← ブートストラップ (~15 行)
+    ruby_runtime.js  ← ruby.wasm の VM 起動と Kotoyomi.start 呼び出し
 
-  lib/
-    dom.rb             ← DOM 操作ラッパー (Kotoyomi::DOM, Kotoyomi::Element)
-    kotoyomi.rb        ← アプリのエントリポイント (Kotoyomi::App)
-    renderer.rb        ← DOM 生成 (Kotoyomi::Renderer)
-    player.rb          ← cuechange ハンドリング・ハイライト (Kotoyomi::Player)
+  lib/               ← ツール本体 (Ruby)
+    dom.rb           ← DOM 操作ラッパー (Kotoyomi::DOM, Kotoyomi::DOM::Element)
+    kotoyomi.rb      ← アプリのエントリポイント (Kotoyomi::App)
+    renderer.rb      ← DOM 生成 (Kotoyomi::Renderer)
+    player.rb        ← cuechange ハンドリング・ハイライト (Kotoyomi::Player)
 
-  poems/
-    sample.vtt
-    sample.mp3
+  works/
+    sample/
+      index.html     ← サンプル作品の動くデモ
+      poems/
+        sample.vtt
+        sample.mp3
 ```
 
 ビルド成果物 (`dist/` 等) は持たない。`src/*.js` をブラウザがそのまま ES Modules として読み込む。
+
+`src/ruby_runtime.js` は `lib/*.rb` の取得を `import.meta.url` 起点で解決する。これによりツール JS が CDN や別オリジンから import されても、`lib/*.rb` はツール JS と同じ場所から取得される。
 
 ## 5. 詩テキスト形式
 
@@ -404,28 +411,44 @@ WebVTTパースとcue同期はブラウザに委ね、Ruby エンジンのDOM操
 ### 14.1 配布物
 
 ```text
-index.html
-app.css
-src/
+index.html              # ランディングページ
+app.css                 # ツール本体 (CSS)
+src/                    # ツール本体 (JS)
   main.js
   ruby_runtime.js
-lib/
+lib/                    # ツール本体 (Ruby)
   dom.rb
   kotoyomi.rb
   renderer.rb
   player.rb
-poems/
-  sample.vtt
-  sample.mp3
+works/
+  sample/
+    index.html
+    poems/
+      sample.vtt
+      sample.mp3
 ```
 
 ビルド成果物は無し。これらの静的ファイルをそのまま配信する。
 
 ### 14.2 実行方法
 
-任意の静的Webサーバー上で実行する。同一オリジンであることが前提。ruby.wasm 配布物は実行時に CDN から取得する。
+任意の静的Webサーバー上で実行する。`lib/*.rb` の取得は `import.meta.url` 起点で解決されるため、ツール本体 (root の `src/`/`lib/`/`app.css`) と コンテンツサイト (例: `works/sample/` または別リポ) が同一オリジンに無くても動作する。
 
 ローカル開発時は静的サーバを立ち上げる (詳細は §12.1)。
+
+### 14.3 想定ユースケース
+
+このリポジトリを **テンプレート** として扱い、利用者が以下の 2 通りで使うことを想定する:
+
+- **ローカルで楽しむ** — clone してローカルで作品を追加・再生する。公開しない、または自分用に編集
+- **自分の Web サイトで公開する** — fork して自分の GH Pages にデプロイする (または clone して任意のホスティングに配置)
+
+いずれも `works/sample/` を雛形に `works/<作品名>/` を作り、`index.html` の audio/track の src を差し替えるだけ。ツール参照 (`../../src/main.js`、`../../app.css`) は sample と共通。
+
+別リポジトリで自分のサイトを作り CDN 経由で kotoyomi を取り込む形も技術的には可能 (`src/ruby_runtime.js` の `import.meta.url` 化により、ツール JS が別オリジンから import されても `lib/*.rb` は同じ場所から解決される)。ただし安定バージョンの未リリースと cross-origin 実機検証が未済のため、当面は非推奨。
+
+vendor 同梱 (ツール本体を自リポにコピー) は今回の対象外。
 
 ### 14.3 完全オフライン対応
 

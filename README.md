@@ -32,21 +32,69 @@ bundle exec wsv
 
 [wsv](https://github.com/takahashim/wsv) を使った静的配信です。`Gemfile` に定義してあり、設定ファイル不要、デフォルトで `127.0.0.1:8000` で起動します。
 
-ブラウザで `http://localhost:8000/` を開くと:
+ブラウザで以下を開きます:
 
-1. 初回は ruby.wasm (~3〜5MB gzipped) を CDN から取得するため数秒待つ
-2. `<audio>` の再生ボタンを押すと、現在の段落が中央でフェードインしながらハイライトされる
-3. 「最初に戻る」ボタンで音声と表示を冒頭に戻せる
+- `http://localhost:8000/works/sample/` — 動くデモ
 
-サンプル朗読音声 (`poems/sample.mp3`) と WebVTT 字幕 (`poems/sample.vtt`) は同梱されています。
+初回は ruby.wasm (~3〜5MB gzipped) を CDN から取得するため数秒待ちます。`<audio>` の再生ボタンで段落がフェードインしながらハイライトされ、「最初に戻る」ボタンで冒頭に戻ります。
 
-## 配布物
+## 使い方
 
-`index.html` / `app.css` / `src/` / `lib/` / `poems/` を任意の静的Webサーバーに配置すれば動作します。バンドル不要、ビルド不要。
+このリポジトリはテンプレートとして使います。想定するユースケースは 2 つです。
+
+### ユースケース 1: ローカルで実行する
+
+自分の環境で朗読作品を実行したい、または公開せずに作品を編集・確認したい場合。
+
+```bash
+git clone https://github.com/takahashim/kotoyomi.git
+cd kotoyomi
+bundle install
+bundle exec wsv
+```
+
+ブラウザで `http://localhost:8000/works/sample/` を開けばサンプルが動きます。自分の作品を加えるなら `works/<作品名>/` を新設して `works/sample/` を真似ます。
+
+### ユースケース 2: 自分の Web サイトで公開する
+
+朗読作品を Web で公開したい場合。GitHub のアカウントがあるなら fork が一番手軽です。
+
+1. このリポジトリを **fork**
+2. fork した自分のリポジトリで GH Pages を有効化 (Settings → Pages → Source: GitHub Actions)
+3. `works/<作品名>/` を追加して push
+4. `https://yourname.github.io/kotoyomi/works/<作品名>/` で公開される
+
+GitHub 以外でホスティングしたい (Netlify、自分の VPS、S3 等) なら clone して必要なファイル一式 (root の `index.html` `app.css` `src/` `lib/` `works/`) を任意の静的ホスティングに置けば動きます。
+
+## 作品を追加する
+
+`works/sample/` を雛形にコピーして、自分の朗読音声 (`.mp3`) と WebVTT 字幕 (`.vtt`) に差し替えます。
+
+```
+works/
+  takahashim/
+    index.html      # works/sample/index.html をコピー、audio/track の src を差し替え
+    poems/
+      takahashim.mp3
+      takahashim.vtt
+```
+
+`index.html` のツール参照 (`../../src/main.js`、`../../app.css`) は sample と同じものでそのまま動きます。
+
+## 必要な DOM 規約
+
+ツールは以下の DOM ID/class を期待しています:
+
+- `#audio` — `<audio>` 要素
+- `#track` — `<track kind="metadata">` 要素 (`<audio>` の中)
+- `#poem` — 段落をレンダリングする入れ物 (`.poem` クラス)
+- `#error` — エラー表示 (初期は `hidden`)
+- `#reset` — 「最初に戻る」ボタン
+- `.poem-viewport`, `.app`, `.controls` — レイアウト用クラス
 
 ## 本文テキスト形式
 
-[WebVTT](https://www.w3.org/TR/webvtt1/) 準拠。各 cue が 1 つの段落に対応する。cue 識別子を付けると DOM の `id` として再利用される。
+[WebVTT](https://www.w3.org/TR/webvtt1/) 準拠。各 cue が 1 つの段落に対応する。cue 識別子を付けると DOM の `id` として再利用されます。
 
 ```
 WEBVTT
@@ -62,10 +110,4 @@ stanza-2
 川面に揺れている
 ```
 
-cue 本文の各行は `<p class="stanza-line">` として `<div class="stanza">` 内に配置され、CSS の縦書き設定によって右から左へ並ぶ。
-
-## 将来の検討事項
-
-- [mruby](https://mruby.org/) や [PicoRuby](https://github.com/picoruby/picoruby) の WASM ビルドへの置き換え
-- ruby.wasm 配布物の vendor 化（PWA 化と合わせて）
-- `js` gem の薄い抽象化レイヤー（ランタイム差し替えに備える）
+cue 本文の各行は `<p class="stanza-line">` として `<div class="stanza">` 内に配置され、CSS の縦書き設定によって右から左へ並びます。
