@@ -1,5 +1,3 @@
-require "js"
-
 module Kotoyomi
   class Player
     def initialize(track, elements, audio)
@@ -9,11 +7,15 @@ module Kotoyomi
       @cues = @track[:cues]
       @cue_count = @cues[:length].to_i
       @current_index = -1
+      # cuechange listener の wrapper Value を保持。Player の寿命中は
+      # GC されないように (JSBridge::Value#on は wrapper を返すが
+      # 呼び出し側で持たないと release される)
+      @callbacks = []
     end
 
     def start
       @track[:mode] = "hidden"
-      @track.addEventListener("cuechange") { update }
+      @callbacks << @track.on(:cuechange) { update }
       update
       self
     end

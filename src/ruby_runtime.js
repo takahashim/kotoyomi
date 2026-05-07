@@ -1,11 +1,17 @@
-const RUBY_WASM_VERSION = "2.8.1";
-const BROWSER_ESM_URL =
-  `https://cdn.jsdelivr.net/npm/@ruby/wasm-wasi@${RUBY_WASM_VERSION}/dist/browser/+esm`;
-const RUBY_WASM_URL =
-  `https://cdn.jsdelivr.net/npm/@ruby/3.4-wasm-wasi@${RUBY_WASM_VERSION}/dist/ruby+stdlib.wasm`;
+// kotoyomi のランタイム = mruby + mruby-js-bridge。ruby.wasm + js gem の
+// 旧構成は ../vendor/mruby-js-bridge/ にバンドル化された自前 mrbgem に置換済み。
+//
+// 起動の流れ:
+//   1. mruby.wasm を boot() で instantiate (adapter.js の WASM imports を
+//      満たすことで JSBridge.* / WASI fd_write 等が動くようになる)
+//   2. lib/*.rb を fetch して 1 ファイルずつ evalRuby に流す
+//   3. evalRuby("Kotoyomi.start") で App を起動
+//
+// `evalRuby` は内部で source を Fiber でくるむので、Ruby 側の
+// `value.await` がそのまま動く (例: lib/kotoyomi.rb の wait_for_track_load)。
 
-// import.meta.url 起点で解決する。これによりこのモジュールが
-// CDN や別オリジンから import されても lib/*.rb を同じ場所から取得できる。
+import { boot, evalRuby } from "../vendor/mruby-js-bridge/adapter.js";
+
 const RUBY_SOURCES = [
   "lib/dom.rb",
   "lib/renderer.rb",
@@ -13,16 +19,11 @@ const RUBY_SOURCES = [
   "lib/kotoyomi.rb",
 ].map((path) => new URL(`../${path}`, import.meta.url).href);
 
+const WASM_URL =
+  new URL("../vendor/mruby-js-bridge/mruby.wasm", import.meta.url).href;
+
 export async function bootRuby() {
-  const [{ DefaultRubyVM }, wasmResponse] = await Promise.all([
-    import(BROWSER_ESM_URL),
-    fetch(RUBY_WASM_URL),
-  ]);
-  if (!wasmResponse.ok) {
-    throw new Error(`ruby.wasm の取得に失敗しました (${wasmResponse.status})`);
-  }
-  const wasmModule = await WebAssembly.compileStreaming(wasmResponse);
-  const { vm } = await DefaultRubyVM(wasmModule);
+  await boot(WASM_URL);
 
   const sources = await Promise.all(
     RUBY_SOURCES.map(async (path) => {
@@ -31,7 +32,11 @@ export async function bootRuby() {
       return res.text();
     }),
   );
-  for (const source of sources) vm.eval(source);
 
-  await vm.evalAsync("Kotoyomi.start");
+  for (const source of sources) {
+    const rc = evalRuby(source);
+    if (rc !== 0) throw new Error("Ruby ソースのロードに失敗しました (詳細はコンソール)");
+  }
+
+  evalRuby("Kotoyomi.start");
 }

@@ -1,8 +1,10 @@
-require "js"
+# mruby + mruby-js-bridge 前提。`require "js"` は不要 (gem として
+# JSBridge module が boot 時に自動定義される)。
+JS = JSBridge
 
 module Kotoyomi
   # JS の document / Element を素直に扱うための薄いラッパー。
-  # 完全には DOM を隠蔽せず、必要なら Element#native で JS::Object を取り出せる。
+  # 完全には DOM を隠蔽せず、必要なら Element#native で JS::Value を取り出せる。
   module DOM
     DOCUMENT = JS.global[:document]
 
@@ -11,20 +13,22 @@ module Kotoyomi
     class Element
       def initialize(node)
         @node = node
+        # registered listeners のラッパー Value をここで保持。Element の
+        # 寿命中は GC されないようにするため (callback の C-side proc は
+        # JSBridge 側で pin されるが、JS ラッパー関数の handle はここが
+        # rooter になる)
+        @callbacks = []
       end
 
-      # 元の JS::Object を取り出す (JS API に直接渡すとき用)。
       attr_reader :node
       alias native node
 
-      # 任意プロパティアクセス
       def [](key) = @node[key]
 
       def []=(key, value)
         @node[key] = value
       end
 
-      # よく使う属性
       def id=(value)
         @node[:id] = value
       end
@@ -45,9 +49,10 @@ module Kotoyomi
         hash.each { |k, v| @node[:dataset][k] = v.to_s }
       end
 
-      # 子要素操作
       def append(child)
-        @node.appendChild(child.is_a?(Element) ? child.native : child)
+        # `Element === child` は Ruby の Module#=== で C 実装。child が
+        # JSBridge::Value (BasicObject) の場合に is_a? を呼ばずに済む
+        @node.appendChild((Element === child) ? child.native : child)
         self
       end
 
@@ -56,7 +61,6 @@ module Kotoyomi
         self
       end
 
-      # CSS クラス
       def add_class(name)
         @node[:classList].add(name)
         self
@@ -67,7 +71,6 @@ module Kotoyomi
         self
       end
 
-      # 表示制御
       def show
         @node[:hidden] = false
         self
@@ -79,13 +82,14 @@ module Kotoyomi
       end
 
       # イベント購読 (ブロックが JS コールバックとして渡る)
-      def on(event, &)
-        @node.addEventListener(event.to_s, &)
+      # options に JSBridge.object(once: true) などを渡せる
+      def on(event, options = nil, &block)
+        @callbacks << @node.on(event.to_s, options, &block)
         self
       end
     end
 
-    # id で要素を取得して Element として返す。
+    # id で要素を取得して Element として返す。なければ nil
     def self.[](id)
       node = DOCUMENT.getElementById(id)
       node.nil? ? nil : Element.new(node)
@@ -107,6 +111,8 @@ module Kotoyomi
       elm
     end
 
+    # Internal helper. mruby は `private_class_method` を持たないので
+    # 名前頭の `_` は付けず、命名規則だけで内部扱いとして扱う。
     def self.apply_attr(elm, key, value)
       case key
       when :id    then elm.id = value
@@ -117,6 +123,5 @@ module Kotoyomi
       else             elm[key] = value
       end
     end
-    private_class_method :apply_attr
   end
 end

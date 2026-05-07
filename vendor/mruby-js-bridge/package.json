@@ -1,0 +1,14 @@
+{
+  "name": "mruby-js-bridge",
+  "version": "0.0.0-dev",
+  "description": "Minimal mruby ↔ JavaScript bridge for WASM hosts",
+  "type": "module",
+  "main": "./adapter.js",
+  "exports": {
+    ".": "./adapter.js",
+    "./wasm": "./mruby.wasm"
+  },
+  "files": ["adapter.js", "mruby.wasm", "README.md", "LICENSE"],
+  "license": "MIT",
+  "engines": { "node": ">=18" }
+}

@@ -1,5 +1,3 @@
-require "js"
-
 module Kotoyomi
   class Renderer
     def initialize(cues, container)
