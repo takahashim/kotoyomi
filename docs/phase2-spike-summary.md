@@ -1,8 +1,8 @@
-# Phase 2a–2d Spike サマリ — JS bridge と kotoyomi 本体の mruby 移植
+# Phase 2a–2e Spike サマリ — JS bridge 構築から kotoyomi 本体の mruby 切り替えまで
 
 **期間**: 2026-05-07 〜 2026-05-08 (Phase 1 完了直後から連続で実施)
-**ブランチ**: `spike/mruby-bridge`
-**結果**: ✅ 成功 (kotoyomi sample がブラウザで mruby 経由で動作)
+**ブランチ**: `spike/mruby-bridge` (Phase 2a-2d) → `feat/mruby-runtime` (Phase 2e、本体反映)
+**結果**: ✅ 完了 (kotoyomi 本体が ruby.wasm 依存ゼロで mruby + 自前 gem ベースで動作)
 
 ## 1. 目的と成功条件
 
@@ -124,6 +124,31 @@ mruby は標準で fiber/Asyncify を持たないため、ruby.wasm の `JS.eval
 
 `host/run-kotoyomi-node.mjs` を追加。最小 DOM/EventTarget/Audio shim と fake cue を仕込み、`Kotoyomi.start` → simulate track load → `poem.children.length == 2` まで Node 上で確認できる。CI/回帰テストに使える形。
 
+### Phase 2e — kotoyomi 本体ランタイム切替 (ruby.wasm → mruby、`feat/mruby-runtime` ブランチ)
+
+Phase 2d までで spike 内部に「kotoyomi が mruby で動く構成」が揃ったので、本体側 (`lib/`、`src/`、`works/`) を ruby.wasm から mruby に切り替えた。spike branch から `feat/mruby-runtime` を切って作業。
+
+#### 主な変更
+
+1. **`lib/*.rb` を mruby + JSBridge 版に差し替え** — `require "js"` 削除、`Kotoyomi::JS::Value` → `JSBridge::Value`、`rescue JS::Error` → `rescue JSBridge::Error`、`DOM::Element` / `Player` に `@callbacks` rooting 追加。Phase 2d で完成させた `mruby-js-bridge` 機能 (`Value#await`、`JSBridge::Error#js_value`、`#instanceof?` 等) のおかげで spike/app/ から大幅変更なしに lib/ へ収まった
+2. **`wait_for_track_load` を `.await` に書き戻し** — Phase 2d では callback split で書き直していたが、mruby-fiber + Fiber-based await 実装が間に合ったので ruby.wasm 同等の sync 風コードに復元。`JSBridge.eval(<<~JS).await` 構文が動く
+3. **`src/ruby_runtime.js` を全面書き換え** — `DefaultRubyVM` (CDN 経由 ruby.wasm) を `vendor/mruby-js-bridge/adapter.js` の `boot()` + `evalRuby()` に置換。CDN 依存ゼロ
+4. **`vendor/mruby-js-bridge/` バンドル配置** — `spike/Makefile` の `make dist` 出力 (adapter.js + mruby.wasm + package.json) をリポジトリ ルートに配置してコミット。GitHub Pages の deploy workflow にも `vendor/` を追加
+5. **重複ディレクトリの削除** — `spike/app/` (lib の同一コピー) と `spike/host/sample/` (works/sample の同一コピー) を削除して 1 ソース化。spike/host/run-kotoyomi-node.mjs は `../../lib/*.rb` を直接 load する形に更新
+
+#### 移植時に踏んだ問題と対処
+
+- **`private_class_method` 不在**: mruby-class-ext gem を入れていない (敢えて Phase 2 では minimal 構成) ので `lib/dom.rb` の private 化を諦めた (命名規則のみで内部扱い)
+- **heredoc 末尾 `;` で syntax error**: `JSBridge.eval(<<~JS).await` の heredoc 内の最後の `;` が adapter.js の `js_eval` の `Function('return (' + src + ');')()` wrap で `(...;)` になり parens 内 statement-end でコケる。`;` を削って `)` で終えるように修正
+- **`spike/host/sample/` を消した影響**: `spike/host/index.html` の sample/ リンクを削除して repository root の `bundle exec wsv` 経由で `works/sample/` を見る案内に書き換え
+
+#### 結果
+
+- `works/sample/` がブラウザで再生・ハイライト遷移・「最初に戻る」すべて従前 (ruby.wasm 版) と同等に動作
+- 配布サイズ: ruby.wasm の `ruby+stdlib.wasm` ~17.2MB → mruby + mruby-js-bridge **~3.9MB** (gzip ~1.1MB)
+- CDN 依存ゼロ (`vendor/` 一式が self-host)
+- `make test` で 99/99 / 150 assertions pass
+
 ## 4. 解決した技術課題
 
 ### (1) Promise から渡された値が常に 0 になる
@@ -242,7 +267,14 @@ spike 上で動くことは確認済み。次は top-level 側を mruby に切�
 - `lib/*.rb` を `spike/app/*.rb` の内容で上書き (`require "js"` 行を削るだけで両立可)
 - `src/ruby_runtime.js` を `spike/host/boot-kotoyomi.js` ベースで書き直し (`DefaultRubyVM` ではなく自前 `boot()`)
 - `src/main.js` のエラーハンドリングを継承 (start 失敗時のフォールバック)
-- `mruby.wasm` の配布方法決定 (vendor 同梱 vs ビルド時生成)
+- `mruby.wasm` の配布方法決定 (vendor 同梱 vs ビルド時生成) → **Phase 2e で `vendor/` 同梱を採用**
+
+### Phase 2e で対応した項目 (本体反映、`feat/mruby-runtime`)
+
+- ✅ `lib/*.rb` を mruby + JSBridge 版に切替
+- ✅ `src/ruby_runtime.js` を mruby boot 版に置換
+- ✅ `vendor/mruby-js-bridge/` バンドル配置 + GitHub Pages workflow 追従
+- ✅ `wait_for_track_load` を `.await` ベースに復元
 
 ### Phase 6 (将来): picoruby
 
@@ -250,20 +282,32 @@ picoruby は mruby/c ベースで Class 定義に制約があるため、`JSBrid
 
 ## 8. 再現手順
 
+### kotoyomi 本体 (Phase 2e 後の構成)
+
 ```bash
-git switch spike/mruby-bridge
-cd spike
-make all                  # Phase 1 から変更なし
-make serve                # docroot は spike/、http://localhost:8001/host/sample/ で kotoyomi sample
+git switch feat/mruby-runtime  # またはマージ後の main
+bundle exec wsv                # 127.0.0.1:8000 で起動
 ```
 
-ブラウザで http://localhost:8001/host/sample/ を開くと既存 `works/sample/` と同じ poem player UI が表示され、再生でハイライトが連ごとに移り、「最初に戻る」ボタンで先頭に戻る。
+ブラウザで `http://127.0.0.1:8000/works/sample/` を開く。`vendor/mruby-js-bridge/mruby.wasm` がリポジトリに同梱されているので追加ビルド不要 (`bundle install` のみ)。
 
-Node 上での smoke 実行も可能:
+### gem 単体の再ビルド (mruby-js-bridge を更新したい場合)
 
 ```bash
-node host/run-node.mjs           # Phase 2c 機能 (BasicObject + await 代替)
-node host/run-kotoyomi-node.mjs  # kotoyomi 起動シナリオ (poem.children: 2 を確認)
+git switch feat/mruby-runtime
+cd spike
+make all          # wasi-sdk 取得 → mruby ビルド → mruby.wasm 生成
+make test         # wasm_spec/ 99 tests pass を確認
+make dist         # spike/dist/mruby-js-bridge/ にバンドル出力
+cp -r dist/mruby-js-bridge/{adapter.js,mruby.wasm} ../vendor/mruby-js-bridge/
+```
+
+### Node smoke
+
+```bash
+cd spike
+node host/run-node.mjs           # Phase 2c 機能 (BasicObject + await)
+node host/run-kotoyomi-node.mjs  # lib/*.rb を Node + 偽 DOM で実行 (poem.children: 2 を確認)
 ```
 
 期待する出力 (`run-node.mjs` — Phase 2c 機能を JS-driven evalRuby で再演):
@@ -284,30 +328,56 @@ node host/run-kotoyomi-node.mjs  # kotoyomi 起動シナリオ (poem.children: 2
 
 ## 9. 関連ファイル
 
+### 本体 (Phase 2e 後、`feat/mruby-runtime` ブランチ)
+
 | ファイル | 役割 |
 |---|---|
-| `spike/mrbgem/mruby-js-bridge/src/js_bridge.c` | C primitive + `js_bridge_eval_handle` export (約 350 行) |
-| `spike/mrbgem/mruby-js-bridge/mrblib/js_bridge.rb` | Ruby ラッパー、BasicObject ベース (143 行) |
-| `spike/main/main.c` | `mrb_open()` だけ (SCRIPT 埋込みは廃止、Phase 2d) |
-| `spike/mrbgem/mruby-js-bridge/js/adapter.js` | JS host adapter、handle table、imports、`evalRuby`、`debug.trace` (約 305 行)。再配布性確保のため gem 内へ移動済み |
-| `spike/mrbgem/mruby-js-bridge/wasm_spec/` | gem 自前の test 一式 (spec_helper + 9 ファイル + runner.mjs)。`make test` または `node .../wasm_spec/runner.mjs` で実行 |
-| `spike/host/boot-kotoyomi.js` | kotoyomi sample 用の boot エントリ (`.rb` fetch + evalRuby) |
-| `spike/host/sample/index.html` | kotoyomi player の HTML (`works/sample/index.html` と同等) |
+| `lib/{dom,renderer,player,kotoyomi}.rb` | プレイヤー本体 (mruby + JSBridge 前提) |
+| `src/ruby_runtime.js` | mruby.wasm boot + `lib/*.rb` ロード |
+| `src/main.js` | エントリ (DOMContentLoaded で bootRuby) |
+| `vendor/mruby-js-bridge/adapter.js` | JS-side host adapter (gem からコピー、~305 行) |
+| `vendor/mruby-js-bridge/mruby.wasm` | mruby + 自前 gem 入り wasm (~3.9 MB) |
+| `vendor/mruby-js-bridge/{package.json,README.md,LICENSE}` | npm 配布想定のメタ |
+| `.github/workflows/pages.yml` | デプロイで `vendor/` も含めて配信 |
+| `docs/runtime-tradeoffs.md` | ruby.wasm vs mruby の trade-off 解説 |
+
+### gem 開発環境 (`spike/` 配下、commit 履歴は `spike/mruby-bridge` ブランチ参照)
+
+| ファイル | 役割 |
+|---|---|
+| `spike/mrbgem/mruby-js-bridge/src/js_bridge.c` | C primitive + WASM exports (約 500 行) |
+| `spike/mrbgem/mruby-js-bridge/mrblib/js_bridge.rb` | Ruby ラッパー (BasicObject ベース、約 380 行) |
+| `spike/mrbgem/mruby-js-bridge/js/adapter.js` | JS adapter (canonical な実体、vendor へコピー) |
+| `spike/mrbgem/mruby-js-bridge/wasm_spec/` | 99 tests (`make test` または `node wasm_spec/runner.mjs`) |
+| `spike/main/main.c` | `mrb_open()` だけのドライバ (gem を活かす最小 main) |
+| `spike/build_config/wasi.rb` | mruby cross-build 設定 (`mruby-method` 追加、`mruby-regexp` 除外) |
+| `spike/Makefile` | `make all` / `make test` / `make dist` / `make serve` |
 | `spike/host/run-node.mjs` | Phase 2c 機能の Node smoke |
-| `spike/host/run-kotoyomi-node.mjs` | kotoyomi 起動シナリオの Node smoke |
-| `spike/app/{dom,renderer,player,kotoyomi}.rb` | `lib/*.rb` の mruby ポート版 (Phase 2d) |
-| `spike/host/run-node.mjs` | Node smoke runner |
-| `spike/main/main.c` | テストスクリプト埋込 main (59 行) |
-| `spike/build_config/wasi.rb` | mruby を wasi-sdk + clang でビルドする設定 (`mruby-method` 追加、`mruby-regexp` 除外) |
-| `docs/phase1-spike-summary.md` | Phase 1 (eval だけ) のサマリ |
+| `spike/host/run-kotoyomi-node.mjs` | `lib/*.rb` を Node + 偽 DOM で実行する smoke |
+| `spike/host/phase2c.html` | ブラウザの bridge smoke |
+| `docs/phase1-spike-summary.md` | Phase 1 (`Kotoyomi::JS.eval` 1 つだけ) のサマリ |
 | `docs/mruby-bridge.md` | Phase 0 設計 + 全 Phase ロードマップ |
 
 ## 10. 評価
 
-Phase 1 は「絵に描いた eval が一回動く」段階だったが、Phase 2a–2c で **kotoyomi の lib コードがほぼそのまま載る形** までブリッジが育ち、Phase 2d で **実際にそのまま載った**。`BasicObject` 化と `method_missing` 委譲で `obj.method(arg)`/`obj.attr = v` の Ruby らしい記述が保て、ruby.wasm からの移植は `require "js"` の削除と `wait_for_track_load` の callback 化だけで済んだ。
+Phase 1 は「絵に描いた eval が一回動く」段階だったが、Phase 2a–2c で **kotoyomi の lib コードがほぼそのまま載る形** までブリッジが育ち、Phase 2d で **実際にそのまま載った**。Phase 2e で `feat/mruby-runtime` ブランチに本体反映し、ruby.wasm + `js` gem 依存をリポジトリから完全に取り除いた。
 
-`await` を持たない制約は当初の懸念だったが、kotoyomi では「Promise を then で繋ぐ」「load イベントを once で待つ」の 2 種類しか使っていないので、書き換えコストは限定的だった。
+`BasicObject` 化と `method_missing` 委譲で `obj.method(arg)`/`obj.attr = v` の Ruby らしい記述が保たれ、ruby.wasm 版からの移植は `require "js"` の削除と `JS` → `JSBridge` のリネームだけでほぼ済んだ。`Value#await` (mruby-fiber + 自前 fiber registry) のおかげで `wait_for_track_load` も sync 風に書ける。
 
-`mruby-regexp` の `String#split` バグ (super で C 実装に届かない) と、wasm export 直下から `mrb_yield_argv` を呼んで例外で `unreachable` クラッシュする問題は、想定外の伏兵だったが両方原因特定+回避済み。
+ruby.wasm に対する **mruby を選んだことの実利** は:
 
-次フェーズ (Phase 2e) は本体 lib の書き換えと `src/ruby_runtime.js` の差し替え。エラー伝搬 (`JS::Error`) は本体移植前にもう少し詰めておく価値がある (現状は handle 0 を返すだけで Ruby 側に raise されない)。
+- **配布サイズ ~17.2MB → ~3.9MB** (gzip ~4.4MB → ~1.1MB)。CDN 不要で self-host
+- **起動時間 数秒 → 数百ms**
+- **ランタイム掌握**: `JSBridge::Error#js_value`、callback release API、`JSBridge.stats` 等の独自機能を必要なペースで追加可能
+- **picoruby (microcontroller) への移行パス** が将来開ける
+
+詳細な trade-off は [`docs/runtime-tradeoffs.md`](./runtime-tradeoffs.md) を参照。
+
+実装中に踏んだ **想定外の伏兵** はいずれも原因特定+回避済み:
+
+- `Object#then` (mruby-object-ext) が JS の Promise.then をシャドウ → BasicObject 化で解決
+- `mruby-regexp` の `String#split` が super で C 実装に届かない (mruby HEAD のバグ) → 該当 gem 除外で回避
+- wasm export 直下から `mrb_yield_argv` 呼ぶと例外 longjmp で host が `unreachable` → `MRB_TRY/CATCH` で囲って解決
+- await 用 callback Proc が closure に Fiber を握ってしまい GC mark が dead-fiber stack に踏み込む → fid 経由 registry で間接化
+
+`mruby-js-bridge` は **再配布可能な mrbgem** として gem 内自己完結 (src + mrblib + js + wasm_spec + LICENSE)、`make dist` で publishable bundle 出力可能 (Phase A)。GitHub Releases (Phase B) や npm publish (Phase C) は将来必要になった時の拡張ポイント。

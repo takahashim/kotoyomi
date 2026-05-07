@@ -1,5 +1,16 @@
 # mruby-bridge 設計メモ (Phase 0)
 
+> **ステータス: Phase 1-2e 完了** (2026-05-08)
+>
+> 本ドキュメントは Phase 0 (実装着手前の設計メモ) として書かれた歴史的
+> 文書。実装結果は以下:
+> - Phase 1 (eval 1 個動く): [`phase1-spike-summary.md`](./phase1-spike-summary.md)
+> - Phase 2a-2e (gem 完成 + 本体反映): [`phase2-spike-summary.md`](./phase2-spike-summary.md)
+> - ランタイム選定の trade-off: [`runtime-tradeoffs.md`](./runtime-tradeoffs.md)
+>
+> 完成した gem は `spike/mrbgem/mruby-js-bridge/`、本体反映後の lib は
+> `lib/`、配布バンドルは `vendor/mruby-js-bridge/`。
+
 `js` gem / `mruby-js` に依存せず、kotoyomi 専用の自前 mrbgem として JS interop を C で実装するための **設計メモ**。実装着手前に「決まっていること」「調査が必要なこと」を整理しておくことで、後の spike (Phase 1) を漏れなく着手できるようにする。
 
 このドキュメントは [`/Users/maki/.claude/plans/sped-md-kotoyomi-sorted-taco.md`](Phase 0-1 の plan) に対応する作業のためのもの。
