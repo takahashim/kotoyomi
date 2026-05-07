@@ -27,6 +27,10 @@ module JSBridge
   # see the same object.
   @await_fibers = {}
   @await_next_id = 0
+  # Maps a callback Value's JS handle → C-side callback id. Lets
+  # release_callback look up the id without storing it on the Value
+  # object (Value < BasicObject, no friendly ivar story).
+  @callback_ids = {}
 
   class << self
     def global
@@ -38,11 +42,26 @@ module JSBridge
     end
 
     # Wrap a Ruby block as a JS callback function.
-    # Returns a Value holding the JS wrapper. Note: the Proc is held
-    # alive in the C-side callback table for the lifetime of the VM.
+    # Returns a Value holding the JS wrapper. The Proc is registered in
+    # the C-side callback table; release_callback frees it explicitly,
+    # otherwise it lives for the lifetime of the VM.
     def callback(&block)
       raise ArgumentError, "block required" unless block
-      Value.new(_make_callback(block))
+      handle, id = _make_callback(block)
+      @callback_ids[handle] = id
+      Value.new(handle)
+    end
+
+    # Release a callback's Proc from the C-side table so it (and anything
+    # the block closes over) can be GC'd. Idempotent. Use for one-shot
+    # callbacks where you know the JS side will only invoke the wrapper
+    # once (Value#await uses this internally to free the unfired half of
+    # its (then, catch) pair).
+    def release_callback(cb_value)
+      return if cb_value.nil?
+      handle = cb_value.handle
+      id = @callback_ids.delete(handle)
+      _release_callback(id) if id
     end
 
     # Convert a Ruby value into a Value (handle).
@@ -350,9 +369,20 @@ module JSBridge
     # potentially torn-down) state alive and crash the GC mark phase.
     def await
       fid = ::JSBridge.__register_await_fiber__(::Fiber.current)
-      call(:then,
-        ::JSBridge.callback { |val| ::JSBridge.__resume_await_fiber__(fid, [:ok, val]) },
-        ::JSBridge.callback { |err| ::JSBridge.__resume_await_fiber__(fid, [:error, err]) })
+      on_ok = on_err = nil
+      release_pair = -> {
+        ::JSBridge.release_callback(on_ok)
+        ::JSBridge.release_callback(on_err)
+      }
+      on_ok = ::JSBridge.callback do |val|
+        release_pair.call
+        ::JSBridge.__resume_await_fiber__(fid, [:ok, val])
+      end
+      on_err = ::JSBridge.callback do |err|
+        release_pair.call
+        ::JSBridge.__resume_await_fiber__(fid, [:error, err])
+      end
+      call(:then, on_ok, on_err)
       status, value = __yield_for_await__
       ::Kernel.raise(::JSBridge::Error, value.to_s) if status == :error
       value

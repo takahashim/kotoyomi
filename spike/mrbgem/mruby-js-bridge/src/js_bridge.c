@@ -352,7 +352,12 @@ ensure_callback_table(mrb_state *mrb) {
   mrb_gc_register(mrb, g_callback_table);
 }
 
-/* JSBridge._make_callback(proc) -> int handle (for the JS wrapper) */
+/* JSBridge._make_callback(proc) -> [handle, callback_id]
+ *
+ * Returns BOTH the JS wrapper handle (for passing to JS as a function)
+ * AND the callback id (for later release via _release_callback). The
+ * id is what the C-side callback_table is keyed by. Without exposing
+ * it, callers can't free entries and the table grows monotonically. */
 static mrb_value
 mrb_js_make_callback(mrb_state *mrb, mrb_value self) {
   mrb_value proc;
@@ -361,7 +366,34 @@ mrb_js_make_callback(mrb_state *mrb, mrb_value self) {
   int id = g_next_callback_id++;
   mrb_hash_set(mrb, g_callback_table, mrb_fixnum_value(id), proc);
   int handle = js_make_callback(id);
-  return mrb_fixnum_value(handle);
+  mrb_value pair = mrb_ary_new_capa(mrb, 2);
+  mrb_ary_push(mrb, pair, mrb_fixnum_value(handle));
+  mrb_ary_push(mrb, pair, mrb_fixnum_value(id));
+  return pair;
+}
+
+/* JSBridge._release_callback(callback_id) -> nil
+ *
+ * Removes the callback Proc from the C-side table so it (and anything
+ * it closes over) can be GC'd. Idempotent: removing an already-released
+ * id is a no-op. The JS-side wrapper function is NOT removed (it's held
+ * by the JS engine's listener references); subsequent invocations of
+ * the wrapper will look up an empty entry and return early. */
+static mrb_value
+mrb_js_release_callback(mrb_state *mrb, mrb_value self) {
+  mrb_int id;
+  mrb_get_args(mrb, "i", &id);
+  if (mrb_hash_p(g_callback_table)) {
+    mrb_hash_delete_key(mrb, g_callback_table, mrb_fixnum_value((int)id));
+  }
+  return mrb_nil_value();
+}
+
+/* JSBridge._callback_count() -> int — # of currently-registered callbacks. */
+static mrb_value
+mrb_js_callback_count(mrb_state *mrb, mrb_value self) {
+  if (!mrb_hash_p(g_callback_table)) return mrb_fixnum_value(0);
+  return mrb_fixnum_value(mrb_hash_size(mrb, g_callback_table));
 }
 
 /*
@@ -507,6 +539,8 @@ mrb_mruby_js_bridge_gem_init(mrb_state *mrb) {
   mrb_define_module_function(mrb, js, "_inspect", mrb_js_inspect, MRB_ARGS_REQ(1));
   mrb_define_module_function(mrb, js, "_instanceof", mrb_js_instanceof, MRB_ARGS_REQ(2));
   mrb_define_module_function(mrb, js, "_make_callback", mrb_js_make_callback, MRB_ARGS_REQ(1));
+  mrb_define_module_function(mrb, js, "_release_callback", mrb_js_release_callback, MRB_ARGS_REQ(1));
+  mrb_define_module_function(mrb, js, "_callback_count", mrb_js_callback_count, MRB_ARGS_NONE());
 }
 
 void
