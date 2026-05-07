@@ -100,6 +100,37 @@ MRUBY_JS_BRIDGE_WASM=/abs/path/to/mruby.wasm \
   node mrbgem/mruby-js-bridge/wasm_spec/runner.mjs
 ```
 
+## 配布用バンドル (Phase A)
+
+`make dist` で `dist/mruby-js-bridge/` に publishable な形のバンドルを出力。
+
+```bash
+make dist
+# → dist/mruby-js-bridge/
+#     ├── package.json     (name, exports, files)
+#     ├── adapter.js       (gem の js/adapter.js のコピー)
+#     ├── mruby.wasm       (build 成果)
+#     ├── README.md
+#     └── LICENSE
+```
+
+consumer 側での利用例:
+
+```js
+// 1. cp -r dist/mruby-js-bridge/ をベンダーに配置:
+import { boot, evalRuby } from "./vendor/mruby-js-bridge/adapter.js";
+await boot(new URL("./vendor/mruby-js-bridge/mruby.wasm", import.meta.url).href);
+
+// 2. npm publish 後 (Phase C):
+import { boot, evalRuby } from "mruby-js-bridge";
+import wasmUrl from "mruby-js-bridge/wasm";
+await boot(wasmUrl);
+```
+
+将来 GitHub Releases (Phase B) や npm publish (Phase C) を足す場合の
+土台。今は version 固定 (`0.0.0-dev`) なので、リリース前に Makefile の
+`DIST_VERSION` を bump する。
+
 ## Node での smoke
 
 ```bash

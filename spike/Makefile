@@ -29,7 +29,7 @@ CLANG := $(WASI_SDK_DIR)/bin/clang
 SYSROOT := $(WASI_SDK_DIR)/share/wasi-sysroot
 TARGET := wasm32-wasip1
 
-.PHONY: all download wasi-sdk mruby link serve test clean distclean
+.PHONY: all download wasi-sdk mruby link serve test dist clean distclean
 
 all: link
 
@@ -88,9 +88,56 @@ serve:
 test: link
 	node mrbgem/mruby-js-bridge/wasm_spec/runner.mjs
 
+# ---------------------------------------------------------------------------
+# `make dist` — assemble a publishable bundle of mruby-js-bridge under
+# dist/mruby-js-bridge/ with adapter.js + the built mruby.wasm + README +
+# LICENSE + package.json. The bundle can be consumed as:
+#   - cp -r dist/mruby-js-bridge/ /path/to/some/project/  (drop-in)
+#   - npm pack / npm publish  (when ready)
+#   - tarball for GitHub Releases  (Phase B)
+# Version is hardcoded to 0.0.0-dev; bump before publishing.
+# ---------------------------------------------------------------------------
+DIST_DIR := $(CURDIR)/dist/mruby-js-bridge
+GEM_DIR := $(CURDIR)/mrbgem/mruby-js-bridge
+DIST_VERSION := 0.0.0-dev
+
+dist: link
+	@rm -rf $(DIST_DIR)
+	@mkdir -p $(DIST_DIR)
+	cp $(GEM_DIR)/js/adapter.js  $(DIST_DIR)/adapter.js
+	cp $(GEM_DIR)/README.md      $(DIST_DIR)/README.md
+	cp $(GEM_DIR)/LICENSE        $(DIST_DIR)/LICENSE
+	cp $(HOST_WASM)              $(DIST_DIR)/mruby.wasm
+	@printf '%s\n' \
+	  '{' \
+	  '  "name": "mruby-js-bridge",' \
+	  '  "version": "$(DIST_VERSION)",' \
+	  '  "description": "Minimal mruby ↔ JavaScript bridge for WASM hosts",' \
+	  '  "type": "module",' \
+	  '  "main": "./adapter.js",' \
+	  '  "exports": {' \
+	  '    ".": "./adapter.js",' \
+	  '    "./wasm": "./mruby.wasm"' \
+	  '  },' \
+	  '  "files": ["adapter.js", "mruby.wasm", "README.md", "LICENSE"],' \
+	  '  "license": "MIT",' \
+	  '  "engines": { "node": ">=18" }' \
+	  '}' \
+	  > $(DIST_DIR)/package.json
+	@echo ""
+	@echo "Built dist/mruby-js-bridge/ (version $(DIST_VERSION)):"
+	@ls -lh $(DIST_DIR)
+	@echo ""
+	@echo "Use it from a consumer project:"
+	@echo "  cp -r dist/mruby-js-bridge/ ../my-project/vendor/"
+	@echo "  # ESM:"
+	@echo "    import { boot, evalRuby } from './vendor/mruby-js-bridge/adapter.js'"
+	@echo "    await boot(new URL('./vendor/mruby-js-bridge/mruby.wasm', import.meta.url).href)"
+
 clean:
 	rm -rf $(MRUBY_DIR)/build/wasi
 	rm -f $(HOST_WASM)
+	rm -rf $(CURDIR)/dist
 
 distclean: clean
 	rm -rf $(WASI_SDK_DIR) $(WASI_SDK_OK)
