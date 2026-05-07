@@ -15,7 +15,6 @@ kotoyomi は当初 [ruby.wasm](https://github.com/ruby/ruby.wasm) (CRuby を WAS
 |---|---|
 | 中〜大規模 Ruby アプリを WASM で動かしたい | **ruby.wasm** |
 | 小さく速く起動したい、組込み志向、ランタイムを掌握したい | **mruby** |
-| picoruby (microcontroller) への将来移行を想定 | **mruby (経由 picoruby)** |
 | Ruby 文法と stdlib を完全互換でほしい | **ruby.wasm** |
 
 kotoyomi は「縦書きプレイヤー」という小規模 UI で、stdlib も少ししか
@@ -75,12 +74,6 @@ mruby は mrbgems の組合せが build 時に決まる:
 - `JSBridge::Error#js_value` (JS Error 完全保持) のような独自機能を即追加可
 - callback テーブルの release API などのメモリ管理を自分で設計できる
 - bug を踏んでも自分で直せる (実際 Phase 2 中に何度も踏んだ)
-
-### 6. 将来の picoruby 移行パス
-
-picoruby (mruby/c ベース) は microcontroller (Pi Pico、ESP32) で動く Ruby。
-mruby と API が近いので、kotoyomi が将来 IoT デバイス上で動く想定がある
-場合、mruby 経由の方が picoruby への移植コストが低い。
 
 ## デメリット (失ったもの・移行時に踏んだ問題)
 
@@ -174,11 +167,9 @@ kotoyomi の目線では **「やる価値があった」**。
 - CDN-free 配布が確実にできる (個人サイトホスティング向き)
 - 起動速度の改善が UX に直結
 - 自前 gem が「(再利用可能なライブラリ) (`mruby-js-bridge`)」として残る
-- Phase 6 で picoruby/microcontroller を視野に入れる柔軟性
 - mruby + WASM のハマりどころを記録した (`docs/phase1-spike-summary.md`、
   `docs/phase2-spike-summary.md`) ので、後続プロジェクトの参考になる
 
 ただし **「ruby.wasm の代わりに mruby を選ぶ」を一般化はしない**。中〜
 大規模 Ruby アプリを WASM 化したいなら ruby.wasm の方が確実に現実解。
-mruby を選ぶのは「小ささ」「自前管理」「picoruby 路線」のいずれかが
-強く動機づける場合に限る。
+mruby を選ぶのは「小ささ」「自前管理」のいずれかが強く動機づける場合に限る。
