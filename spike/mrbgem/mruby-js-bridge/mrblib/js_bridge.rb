@@ -169,6 +169,44 @@ module JSBridge
       "#<JSBridge::Value #{JSBridge._inspect(handle)}>"
     end
 
+    # Convert an array-like JS value (anything with a numeric .length and
+    # integer-keyed properties — Array, NodeList, arguments, ...) to a
+    # Ruby Array of Values.
+    def to_a
+      len = self[:length].to_i
+      Array.new(len) { |i| self[i] }
+    end
+
+    # Iterate elements of an array-like JS value. With no block, returns
+    # an Enumerator (via Array#each).
+    def each(&block)
+      return to_a.each unless block
+      to_a.each(&block)
+      self
+    end
+
+    # Adapt the wrapped JS function as a Ruby Proc so it can be passed
+    # with `&` to Enumerable methods:
+    #   js_upcase = JS.eval("s => s.toUpperCase()")
+    #   ["a", "b"].map(&js_upcase)  # => [Value("A"), Value("B")]
+    # Implemented via JS Function.prototype.call (`fn.call(null, *args)`).
+    def to_proc
+      fn = self
+      ->(*args) { fn.call(:call, nil, *args) }
+    end
+
+    # method_missing forwards everything to JS, so claim we respond to
+    # anything. Matches ruby.wasm's JS::Object behaviour. Without this,
+    # `obj.respond_to?(:foo)` would itself dispatch to JS as a predicate
+    # call (and falsely return false because JS has no `respond_to`).
+    def respond_to?(_sym, _include_private = false)
+      true
+    end
+
+    def respond_to_missing?(_sym, _include_private = false)
+      true
+    end
+
     # Subscribe a Ruby block to a JS event (ergonomic alias).
     #   button.on(:click) { |ev| ... }
     # Pass options via the second arg, e.g. JSBridge.object(once: true).
