@@ -16,6 +16,7 @@
  */
 
 #include <mruby.h>
+#include <stdio.h>
 #include <string.h>
 #include <mruby/string.h>
 #include <mruby/array.h>
@@ -407,18 +408,14 @@ js_bridge_invoke_proc(int callback_id, int args_handle) {
   int n = js_to_int(length_h);
   js_release(length_h);
 
-  /* Pull out each arg as a Value */
+  /* Pull out each arg as a Value. Index-as-string ("0", "1", ...) is
+   * how JS exposes array elements via property access. */
   mrb_value *args = NULL;
   if (n > 0) {
     args = (mrb_value *)mrb_malloc(mrb, sizeof(mrb_value) * (size_t)n);
     for (int i = 0; i < n; i++) {
       char idx[16];
-      int k = 0;
-      int x = i;
-      char tmp[16];
-      do { tmp[k++] = '0' + (x % 10); x /= 10; } while (x > 0);
-      for (int j = 0; j < k; j++) idx[j] = tmp[k - 1 - j];
-      idx[k] = '\0';
+      int k = snprintf(idx, sizeof(idx), "%d", i);
       int item = js_get(args_handle, idx, k);
       args[i] = wrap_handle(mrb, item);
     }

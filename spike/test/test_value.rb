@@ -60,6 +60,12 @@ Spec.describe "JSBridge::Value primitives (to_s/i/f, nil?, typeof, etc)" do
     Spec.assert_true JS.eval("42").eql?(JS.eval("42"))
   end
 
+  Spec.assert "equal? checks Ruby object identity, NOT JS value equality" do
+    v = JS.eval("42")
+    Spec.assert_true v.equal?(v)               # same Ruby object
+    Spec.assert_false v.equal?(JS.eval("42"))  # different Ruby objects, same JS value
+  end
+
   Spec.assert "inspect shows JSON-ish form" do
     Spec.assert_true JS.eval("42").inspect.include?("42")
     Spec.assert_true JS.eval("'hi'").inspect.include?('"hi"')

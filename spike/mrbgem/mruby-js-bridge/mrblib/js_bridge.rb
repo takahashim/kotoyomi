@@ -120,11 +120,32 @@ module JSBridge
       return if fiber.nil? || !fiber.alive?
       fiber.resume(status_value)
     end
+
+    # Internal helper shared by Value#call / Value#new. Wraps each
+    # positional arg as a Value, hands the resulting handle list to the
+    # block (which performs the actual WASM dispatch), and wraps the
+    # returned handle as a Value.
+    #
+    # `wrapped` stays as a local variable across the yield so mruby's GC
+    # cannot release the temporary Values between handle extraction and
+    # the WASM call (we hit this exact bug in Phase 2b).
+    def __invoke_with_handles__(args)
+      wrapped = args.map { |a| wrap(a) }
+      handles = wrapped.map(&:handle)
+      result_handle = yield handles
+      wrapped # explicit reference so the array survives the yield above
+      Value.new(result_handle)
+    end
   end
 
   class Value
     # `initialize(handle)` and `handle` are defined in C.
     # Inherits from BasicObject — only define what we actually need.
+    # method_missing falls back to JS dispatch, so the surface here is
+    # focused on (a) ergonomic conveniences and (b) escapes from
+    # accidental JS dispatch (e.g. `==`, `nil?`).
+
+    # ---------- Property access ----------
 
     def [](key)
       Value.new(JSBridge._get(handle, key.to_s))
@@ -138,31 +159,22 @@ module JSBridge
       value
     end
 
+    # ---------- Invocation ----------
+
     # Call a JS method. If a block is given, it's wrapped as a JS callback
     # and appended as the last argument (ruby.wasm convention).
     def call(method, *args, &block)
       args = args + [JSBridge.callback(&block)] if block
-      # IMPORTANT: hold the wrapped Values in `wrapped` until _call
-      # returns. Otherwise mruby's GC may collect them between
-      # `.handle` extraction and the WASM call, releasing the JS handles
-      # we just built.
-      wrapped = args.map { |a| JSBridge.wrap(a) }
-      arg_handles = wrapped.map(&:handle)
-      result = Value.new(JSBridge._call(handle, method.to_s, arg_handles))
-      # `wrapped` is now garbage; temp handles get released next GC.
-      wrapped = nil
-      result
+      JSBridge.__invoke_with_handles__(args) do |handles|
+        JSBridge._call(handle, method.to_s, handles)
+      end
     end
 
     # Call as a JS constructor: `Foo.new(args)` → `new Foo(args)`.
-    # Same arg-rooting pattern as #call to keep wrapped Values alive
-    # across the WASM boundary.
     def new(*args)
-      wrapped = args.map { |a| JSBridge.wrap(a) }
-      arg_handles = wrapped.map(&:handle)
-      result = Value.new(JSBridge._new(handle, arg_handles))
-      wrapped = nil
-      result
+      JSBridge.__invoke_with_handles__(args) do |handles|
+        JSBridge._new(handle, handles)
+      end
     end
 
     # Call a JS method with arguments from an Array. Mirrors ruby.wasm's
@@ -171,6 +183,36 @@ module JSBridge
     def apply(method, args_array, &block)
       call(method, *args_array, &block)
     end
+
+    # Subscribe a Ruby block to a JS event (ergonomic alias).
+    #   button.on(:click) { |ev| ... }
+    # Pass options via the second arg, e.g. JSBridge.object(once: true).
+    def on(event, options = nil, &block)
+      cb = JSBridge.callback(&block)
+      if options
+        call(:addEventListener, event.to_s, cb, options)
+      else
+        call(:addEventListener, event.to_s, cb)
+      end
+      cb
+    end
+
+    # method_missing: forward unknown method calls to JS.
+    #   element.appendChild(child)  →  element.call(:appendChild, child)
+    #   list.contains?(item)        →  list.call(:contains, item) → boolean
+    def method_missing(sym, *args, &block)
+      name = sym.to_s
+      if name.end_with?("?")
+        result = call(name[0..-2], *args, &block)
+        result.to_s == "true"
+      elsif name.end_with?("=") && args.size == 1
+        self[name[0..-2]] = args.first
+      else
+        call(sym, *args, &block)
+      end
+    end
+
+    # ---------- Conversion ----------
 
     def to_s
       JSBridge._to_string(handle)
@@ -191,6 +233,18 @@ module JSBridge
       self
     end
 
+    # Adapt the wrapped JS function as a Ruby Proc so it can be passed
+    # with `&` to Enumerable methods:
+    #   js_upcase = JS.eval("s => s.toUpperCase()")
+    #   ["a", "b"].map(&js_upcase)  # => [Value("A"), Value("B")]
+    # Implemented via JS Function.prototype.call (`fn.call(null, *args)`).
+    def to_proc
+      fn = self
+      ->(*args) { fn.call(:call, nil, *args) }
+    end
+
+    # ---------- Iteration ----------
+
     # Length of an array-like JS value (Array, NodeList, arguments, ...).
     # Reads the `length` property and coerces to int. For Map/Set use
     # `value[:size].to_i` directly since they expose `size`, not `length`.
@@ -199,11 +253,73 @@ module JSBridge
     end
     alias_method :size, :length
 
+    # Convert an array-like JS value (anything with a numeric .length and
+    # integer-keyed properties — Array, NodeList, arguments, ...) to a
+    # Ruby Array of Values.
+    def to_a
+      len = self[:length].to_i
+      Array.new(len) { |i| self[i] }
+    end
+
+    # Iterate elements of an array-like JS value. With no block, returns
+    # an Enumerator (via Array#each).
+    def each(&block)
+      return to_a.each unless block
+      to_a.each(&block)
+      self
+    end
+
+    # ---------- Equality ----------
+
+    # JS-side strict equality (===) returning a Ruby boolean.
+    # Without this, method_missing would dispatch `==` to JS as a method
+    # call (which would either explode or return a JS boolean Value, not
+    # a Ruby true/false). Compares wrapped JS values, not handles.
+    def ==(other)
+      o = JSBridge.wrap(other)
+      JSBridge._strict_equal(handle, o.handle)
+    end
+    alias_method :eql?, :==
+    # `equal?` deliberately NOT aliased to `==` — Ruby convention reserves
+    # `equal?` for object-identity checks ("same Ruby object"), which is
+    # different from "same JS value". BasicObject's default equal? gives
+    # the right semantics (pointer identity), so we leave it inherited.
+
+    # ---------- Type queries ----------
+
     # JS null / undefined detection. BasicObject has no nil?, so define
     # one that reflects the wrapped JS value (== null in JS lands here).
     def nil?
       JSBridge._is_null(handle)
     end
+
+    # JS `typeof` — "object", "string", "function", etc.
+    def typeof
+      JSBridge._typeof(handle)
+    end
+
+    # JS `instance instanceof ctor`. Argument should be a Value wrapping
+    # a constructor function. Returns Ruby boolean.
+    def instanceof?(ctor)
+      JSBridge._instanceof(handle, JSBridge.wrap(ctor).handle)
+    end
+
+    # method_missing forwards everything to JS, so claim we respond to
+    # anything. Matches ruby.wasm's JS::Object behaviour. Without this,
+    # `obj.respond_to?(:foo)` would itself dispatch to JS as a predicate
+    # call (and falsely return false because JS has no `respond_to`).
+    def respond_to?(_sym, _include_private = false)
+      true
+    end
+
+    # mruby auto-marks respond_to_missing? as private (matches Ruby
+    # convention). Used as the introspection hook by mruby-method even
+    # though our explicit respond_to? above already covers the public path.
+    def respond_to_missing?(_sym, _include_private = false)
+      true
+    end
+
+    # ---------- Async ----------
 
     # Block until the wrapped Promise settles, then return its resolved
     # value (or raise JSBridge::Error if it rejected). Implemented via
@@ -227,113 +343,33 @@ module JSBridge
       call(:then,
         ::JSBridge.callback { |val| ::JSBridge.__resume_await_fiber__(fid, [:ok, val]) },
         ::JSBridge.callback { |err| ::JSBridge.__resume_await_fiber__(fid, [:error, err]) })
-      status, value =
-        begin
-          ::Fiber.yield
-        rescue ::FiberError
-          ::Kernel.raise(
-            ::NotImplementedError,
-            "JSBridge::Value#await must run inside a Fiber. " \
-            "Top-level evalRuby is auto-wrapped; if you spawn your own " \
-            "task, use JSBridge.__run_in_fiber__ { ... } around it.",
-          )
-        end
+      status, value = __yield_for_await__
       ::Kernel.raise(::JSBridge::Error, value.to_s) if status == :error
       value
     end
 
-    # JS-side strict equality (===) returning a Ruby boolean.
-    # Without this, method_missing would dispatch `==` to JS as a method
-    # call (which would either explode or return a JS boolean Value, not
-    # a Ruby true/false). Compares wrapped JS values, not handles.
-    def ==(other)
-      o = JSBridge.wrap(other)
-      JSBridge._strict_equal(handle, o.handle)
+    # Suspend the current fiber waiting for an await callback. Returns
+    # the [:ok, val] / [:error, err] tuple the resumer passed back.
+    # If the caller wasn't running in a Fiber (e.g. someone wrapped
+    # something other than a top-level evalRuby), Fiber.yield raises
+    # FiberError; we surface that as a NotImplementedError with a hint.
+    def __yield_for_await__
+      ::Fiber.yield
+    rescue ::FiberError
+      ::Kernel.raise(
+        ::NotImplementedError,
+        "JSBridge::Value#await must run inside a Fiber. " \
+        "Top-level evalRuby is auto-wrapped; if you spawn your own " \
+        "task, use JSBridge.__run_in_fiber__ { ... } around it.",
+      )
     end
-    alias_method :eql?, :==
-    alias_method :equal?, :==
 
-    # JS `typeof` — "object", "string", "function", etc.
-    def typeof
-      JSBridge._typeof(handle)
-    end
-
-    # JS `instance instanceof ctor`. Argument should be a Value wrapping
-    # a constructor function. Returns Ruby boolean.
-    def instanceof?(ctor)
-      JSBridge._instanceof(handle, JSBridge.wrap(ctor).handle)
-    end
+    # ---------- Debug ----------
 
     # Debug-friendly representation for `p value`. JSON for plain
     # objects/arrays, String() otherwise.
     def inspect
       "#<JSBridge::Value #{JSBridge._inspect(handle)}>"
-    end
-
-    # Convert an array-like JS value (anything with a numeric .length and
-    # integer-keyed properties — Array, NodeList, arguments, ...) to a
-    # Ruby Array of Values.
-    def to_a
-      len = self[:length].to_i
-      Array.new(len) { |i| self[i] }
-    end
-
-    # Iterate elements of an array-like JS value. With no block, returns
-    # an Enumerator (via Array#each).
-    def each(&block)
-      return to_a.each unless block
-      to_a.each(&block)
-      self
-    end
-
-    # Adapt the wrapped JS function as a Ruby Proc so it can be passed
-    # with `&` to Enumerable methods:
-    #   js_upcase = JS.eval("s => s.toUpperCase()")
-    #   ["a", "b"].map(&js_upcase)  # => [Value("A"), Value("B")]
-    # Implemented via JS Function.prototype.call (`fn.call(null, *args)`).
-    def to_proc
-      fn = self
-      ->(*args) { fn.call(:call, nil, *args) }
-    end
-
-    # method_missing forwards everything to JS, so claim we respond to
-    # anything. Matches ruby.wasm's JS::Object behaviour. Without this,
-    # `obj.respond_to?(:foo)` would itself dispatch to JS as a predicate
-    # call (and falsely return false because JS has no `respond_to`).
-    def respond_to?(_sym, _include_private = false)
-      true
-    end
-
-    def respond_to_missing?(_sym, _include_private = false)
-      true
-    end
-
-    # Subscribe a Ruby block to a JS event (ergonomic alias).
-    #   button.on(:click) { |ev| ... }
-    # Pass options via the second arg, e.g. JSBridge.object(once: true).
-    def on(event, options = nil, &block)
-      cb = JSBridge.callback(&block)
-      if options
-        call(:addEventListener, event.to_s, cb, options)
-      else
-        call(:addEventListener, event.to_s, cb)
-      end
-      cb
-    end
-
-    # Method-missing: forward unknown method calls to JS.
-    #   element.appendChild(child)  →  element.call(:appendChild, child)
-    #   list.contains?(item)        →  list.call(:contains, item) → boolean
-    def method_missing(sym, *args, &block)
-      name = sym.to_s
-      if name.end_with?("?")
-        result = call(name[0..-2], *args, &block)
-        result.to_s == "true"
-      elsif name.end_with?("=") && args.size == 1
-        self[name[0..-2]] = args.first
-      else
-        call(sym, *args, &block)
-      end
     end
   end
 
