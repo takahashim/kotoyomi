@@ -16,6 +16,7 @@
  */
 
 #include <mruby.h>
+#include <string.h>
 #include <mruby/string.h>
 #include <mruby/array.h>
 #include <mruby/hash.h>
@@ -346,9 +347,15 @@ mrb_js_make_callback(mrb_state *mrb, mrb_value self) {
  * mruby loads/parses/executes it; on parse/runtime error, prints to
  * stderr and returns 1 (so the host can show an error).
  *
- * Lets us boot mruby once at _start and then load .rb files lazily
- * from JS, instead of embedding a single hardcoded SCRIPT in main.c.
+ * The source is wrapped in `JSBridge.__run_in_fiber__ do ... end` so
+ * that any `Value#await` inside has a Fiber to yield from. If the
+ * fiber suspends (await fired), this function still returns 0 — the
+ * fiber resumes asynchronously when the awaited Promise settles, via
+ * the existing js_bridge_invoke_proc callback path.
  */
+#define FIBER_PREAMBLE "::JSBridge.__run_in_fiber__ do\n"
+#define FIBER_POSTAMBLE "\nend\n"
+
 __attribute__((export_name("js_bridge_eval_handle")))
 int
 js_bridge_eval_handle(int src_handle) {
@@ -356,9 +363,15 @@ js_bridge_eval_handle(int src_handle) {
   mrb_state *mrb = g_mrb;
   int len = js_to_string_len(src_handle);
   if (len <= 0) return 0;
-  char *buf = (char *)mrb_malloc(mrb, (size_t)len + 1);
-  js_to_string_copy(src_handle, buf, len);
-  buf[len] = '\0';
+
+  size_t pre = sizeof(FIBER_PREAMBLE) - 1;
+  size_t post = sizeof(FIBER_POSTAMBLE) - 1;
+  char *buf = (char *)mrb_malloc(mrb, pre + (size_t)len + post + 1);
+  memcpy(buf, FIBER_PREAMBLE, pre);
+  js_to_string_copy(src_handle, buf + pre, len);
+  memcpy(buf + pre + len, FIBER_POSTAMBLE, post);
+  buf[pre + len + post] = '\0';
+
   mrb_load_string(mrb, buf);
   mrb_free(mrb, buf);
   if (mrb->exc) {
@@ -368,6 +381,9 @@ js_bridge_eval_handle(int src_handle) {
   }
   return 0;
 }
+
+#undef FIBER_PREAMBLE
+#undef FIBER_POSTAMBLE
 
 /*
  * WASM export: invoked by the JS wrapper function when its callback fires.

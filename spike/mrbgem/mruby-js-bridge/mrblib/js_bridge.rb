@@ -82,6 +82,15 @@ module JSBridge
     rescue ArgumentError
       nil
     end
+
+    # Internal: top-level entry-point used by js_bridge_eval_handle to
+    # wrap user source in a Fiber. Without this, `Value#await` has no
+    # parent fiber to yield to. The block runs immediately; if it
+    # `await`s anywhere, the fiber yields and gets resumed later via
+    # a Promise .then callback (see Value#await).
+    def __run_in_fiber__(&block)
+      ::Fiber.new(&block).resume
+    end
   end
 
   class Value
@@ -167,18 +176,35 @@ module JSBridge
       JSBridge._is_null(handle)
     end
 
-    # Explicit stub for ruby.wasm's `await`. mruby has no fiber-based
-    # Asyncify so we can't transparently block on a Promise. Raises with
-    # a pointer to the supported alternatives instead of silently going
-    # through method_missing (which would produce a cryptic JS error).
-    # ::Kernel.raise because Value < BasicObject (no Kernel#raise).
+    # Block until the wrapped Promise settles, then return its resolved
+    # value (or raise JSBridge::Error if it rejected). Implemented via
+    # mruby Fibers — the calling fiber yields after registering .then /
+    # .catch handlers; those handlers resume the fiber once the Promise
+    # fires. Top-level eval is auto-wrapped in a Fiber by
+    # js_bridge_eval_handle, so `value.await` "just works" at top level.
+    #
+    # Note: this is functionally equivalent to ruby.wasm's `await` but
+    # built on Fiber instead of Asyncify. Stack frames across the await
+    # boundary are split (the post-await continuation runs from a
+    # different host re-entry).
     def await
-      ::Kernel.raise(
-        ::NotImplementedError,
-        "JSBridge has no #await (mruby lacks Asyncify). " \
-        "Use `promise.then { |v| ... }` for value-flavored async, or " \
-        "`target.on(event, JSBridge.object(once: true)) { ... }` for one-shot events.",
-      )
+      fiber = ::Fiber.current
+      call(:then,
+        ::JSBridge.callback { |val| fiber.resume([:ok, val]) if fiber.alive? },
+        ::JSBridge.callback { |err| fiber.resume([:error, err]) if fiber.alive? })
+      status, value =
+        begin
+          ::Fiber.yield
+        rescue ::FiberError
+          ::Kernel.raise(
+            ::NotImplementedError,
+            "JSBridge::Value#await must run inside a Fiber. " \
+            "Top-level evalRuby is auto-wrapped; if you spawn your own " \
+            "task, use JSBridge.__run_in_fiber__ { ... } around it.",
+          )
+        end
+      ::Kernel.raise(::JSBridge::Error, value.to_s) if status == :error
+      value
     end
 
     # JS-side strict equality (===) returning a Ruby boolean.
