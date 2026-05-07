@@ -60,6 +60,10 @@ IMPORT(js_make_callback) int js_make_callback(int callback_id);
  * a handle to a string with the JS error's `.message` (or stringification). */
 IMPORT(js_take_error) int js_take_error(void);
 
+/* Diagnostics: # of currently-allocated JS handles (alloc'd minus released).
+ * Used by JSBridge.stats so callers can spot leaks. */
+IMPORT(js_handle_count) int js_handle_count(void);
+
 #undef IMPORT
 
 /* ---------- Static state for callback dispatch ---------- */
@@ -396,6 +400,12 @@ mrb_js_callback_count(mrb_state *mrb, mrb_value self) {
   return mrb_fixnum_value(mrb_hash_size(mrb, g_callback_table));
 }
 
+/* JSBridge._handle_count() -> int — # of currently-allocated JS handles. */
+static mrb_value
+mrb_js_handle_count(mrb_state *mrb, mrb_value self) {
+  return mrb_fixnum_value(js_handle_count());
+}
+
 /*
  * WASM export: JS calls this with a handle to a Ruby source string.
  * mruby loads/parses/executes it; on parse/runtime error, prints to
@@ -541,6 +551,7 @@ mrb_mruby_js_bridge_gem_init(mrb_state *mrb) {
   mrb_define_module_function(mrb, js, "_make_callback", mrb_js_make_callback, MRB_ARGS_REQ(1));
   mrb_define_module_function(mrb, js, "_release_callback", mrb_js_release_callback, MRB_ARGS_REQ(1));
   mrb_define_module_function(mrb, js, "_callback_count", mrb_js_callback_count, MRB_ARGS_NONE());
+  mrb_define_module_function(mrb, js, "_handle_count", mrb_js_handle_count, MRB_ARGS_NONE());
 }
 
 void

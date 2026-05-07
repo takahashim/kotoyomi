@@ -52,6 +52,25 @@ module JSBridge
       Value.new(handle)
     end
 
+    # Snapshot of bridge resource usage. Useful for spotting leaks during
+    # development:
+    #
+    #   before = JSBridge.stats
+    #   1000.times { ... }
+    #   after = JSBridge.stats
+    #   p (after[:handles] - before[:handles])    # JS handles still alive
+    #   p (after[:callbacks] - before[:callbacks]) # registered Procs
+    #
+    # Counts are absolute (cumulative since boot), not deltas.
+    def stats
+      {
+        handles: _handle_count,           # JS-side handle table size
+        callbacks: _callback_count,       # C-side callback Hash size
+        await_fibers: @await_fibers.size, # suspended fibers waiting on .await
+        callback_ids: @callback_ids.size, # Ruby-side handle→cb_id map
+      }
+    end
+
     # Release a callback's Proc from the C-side table so it (and anything
     # the block closes over) can be GC'd. Idempotent. Use for one-shot
     # callbacks where you know the JS side will only invoke the wrapper

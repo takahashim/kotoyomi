@@ -46,6 +46,23 @@ Spec.describe "block-as-callback / on / then" do
     Spec.assert_raises(ArgumentError) { JS.callback }
   end
 
+  Spec.assert "JSBridge.stats returns counters Hash" do
+    s = JS.stats
+    Spec.assert_equal Hash, s.class
+    [:handles, :callbacks, :await_fibers, :callback_ids].each do |k|
+      Spec.assert_true s.key?(k), "missing key #{k}"
+      Spec.assert_equal Integer, s[k].class
+    end
+  end
+
+  Spec.assert "stats[:callbacks] reflects callback registration / release" do
+    before = JS.stats[:callbacks]
+    cb = JS.callback { :x }
+    Spec.assert_equal before + 1, JS.stats[:callbacks]
+    JS.release_callback(cb)
+    Spec.assert_equal before, JS.stats[:callbacks]
+  end
+
   Spec.assert "release_callback removes the Proc from C-side table" do
     before = JS._callback_count
     cb = JS.callback { 99 }

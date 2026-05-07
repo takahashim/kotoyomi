@@ -194,6 +194,13 @@ const jsBridgeImports = {
     }
   },
 
+  // Diagnostic: # of currently-allocated JS handles (active = total
+  // pushed minus released to the free list). Excludes the null sentinel
+  // at index 0. Used by JSBridge.stats.
+  js_handle_count() {
+    return handles.length - 1 - free.length;
+  },
+
   // Take and clear the most recent JS error. Returns 0 if no error
   // pending; otherwise returns a handle to the Error VALUE itself
   // (consumed — second call returns 0 unless a new error fires).
