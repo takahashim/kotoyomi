@@ -48,12 +48,15 @@ module Kotoyomi
       return if ready == 2
       raise TrackLoadError, "track load error" if ready == 3
 
+      # adapter.js の js_eval は `new Function('return (' + src + ');')()`
+      # で wrap するため、source 末尾に `;` を置くと `(...;)` で
+      # syntax error になる。最後の文字は `)` のままにする。
       JSBridge.eval(<<~JS).await
         new Promise((resolve, reject) => {
           const el = document.getElementById("track");
           el.addEventListener("load", () => resolve(), { once: true });
           el.addEventListener("error", () => reject(new Error("track load error")), { once: true });
-        });
+        })
       JS
     rescue JSBridge::Error => err
       raise TrackLoadError, err.message

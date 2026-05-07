@@ -79,9 +79,12 @@ globalThis.fetch = async (url) => {
 // --- Boot + load app -------------------------------------------------------
 await boot(new URL("./mruby.wasm", import.meta.url).href);
 
-const APP = ["app/dom.rb", "app/renderer.rb", "app/player.rb", "app/kotoyomi.rb"];
+// Load the canonical kotoyomi lib from the repo root. Since Phase 2e
+// migrated lib/ to mruby + JSBridge, the same files run here under Node
+// against the gem (with a fake DOM/Audio shim above).
+const APP = ["lib/dom.rb", "lib/renderer.rb", "lib/player.rb", "lib/kotoyomi.rb"];
 for (const rel of APP) {
-  const src = await readFile(new URL(`../${rel}`, import.meta.url), "utf8");
+  const src = await readFile(new URL(`../../${rel}`, import.meta.url), "utf8");
   console.log(`[load] ${rel}`);
   const rc = evalRuby(src);
   if (rc !== 0) {
