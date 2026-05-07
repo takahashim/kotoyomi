@@ -10,7 +10,7 @@
 // The Ruby files themselves expect `JS = JSBridge` (the alias is set
 // at the top of dom.rb so subsequent files don't need to re-set it).
 
-import { boot, evalRuby } from "./adapter.js";
+import { boot, evalRuby } from "../mrbgem/mruby-js-bridge/js/adapter.js";
 
 // Resolve relative to this file so the host page can live anywhere.
 const APP_SOURCES = [

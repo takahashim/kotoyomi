@@ -5,7 +5,7 @@
 // Usage: node host/run-node.mjs
 
 import { readFile } from "node:fs/promises";
-import { boot, evalRuby } from "./adapter.js";
+import { boot, evalRuby } from "../mrbgem/mruby-js-bridge/js/adapter.js";
 
 globalThis.document = {
   _title: "",

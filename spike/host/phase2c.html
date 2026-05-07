@@ -16,7 +16,7 @@
     </p>
     <pre id="status">starting...</pre>
     <script type="module">
-      import { boot, evalRuby } from "./adapter.js";
+      import { boot, evalRuby } from "../mrbgem/mruby-js-bridge/js/adapter.js";
       const status = document.getElementById("status");
       try {
         await boot("./mruby.wasm");

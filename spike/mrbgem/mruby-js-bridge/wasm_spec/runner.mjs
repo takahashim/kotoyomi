@@ -2,12 +2,18 @@
 // browser-ish env, loads spec_helper.rb + each test_*.rb via evalRuby,
 // then runs Spec.summary which sets JSBridge.global[:__test_failed__].
 //
-// Exit code 0 if all tests pass, 1 otherwise. Use `node test/runner.mjs`.
+// Exit code 0 if all tests pass, 1 otherwise.
+// Run with: `node mrbgem/mruby-js-bridge/wasm_spec/runner.mjs`
+//
+// The wasm path defaults to spike's build output (../../../host/mruby.wasm)
+// but can be overridden via MRUBY_JS_BRIDGE_WASM env var so this gem's
+// tests can run against any consumer's mruby.wasm:
+//   MRUBY_JS_BRIDGE_WASM=/abs/path/to/mruby.wasm node wasm_spec/runner.mjs
 
 import { readFile, readdir } from "node:fs/promises";
-import { fileURLToPath } from "node:url";
-import { dirname, join } from "node:path";
-import { boot, evalRuby } from "../host/adapter.js";
+import { fileURLToPath, pathToFileURL } from "node:url";
+import { dirname, join, resolve } from "node:path";
+import { boot, evalRuby } from "../js/adapter.js";
 
 // --- Browser-ish env shim --------------------------------------------------
 // Tests use Date / Map / Set / Error / Promise / EventTarget / setTimeout —
@@ -22,7 +28,9 @@ globalThis.fetch = async (url) => {
   });
 };
 
-const wasmUrl = new URL("../host/mruby.wasm", import.meta.url).href;
+const wasmUrl = process.env.MRUBY_JS_BRIDGE_WASM
+  ? pathToFileURL(resolve(process.cwd(), process.env.MRUBY_JS_BRIDGE_WASM)).href
+  : new URL("../../../host/mruby.wasm", import.meta.url).href;
 await boot(wasmUrl);
 
 // --- Load spec_helper + all test_*.rb -------------------------------------

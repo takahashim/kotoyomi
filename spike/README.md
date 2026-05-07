@@ -26,10 +26,16 @@ spike/
 │   └── wasi.rb             # mruby cross-build 設定 (mruby clone の外)
 ├── mruby/                  # gitignored、`make mruby` で git clone される
 ├── mrbgem/
-│   └── mruby-js-bridge/
+│   └── mruby-js-bridge/    # ── 再配布可能な gem 本体 (詳細は gem の README) ──
 │       ├── mrbgem.rake
-│       ├── src/js_bridge.c        # C primitive (WASM imports + Value)
-│       └── mrblib/js_bridge.rb    # BasicObject ベースの Ruby ラッパー
+│       ├── README.md             # gem 単体の使い方
+│       ├── src/js_bridge.c       # C primitive (WASM imports + Value)
+│       ├── mrblib/js_bridge.rb   # BasicObject ベースの Ruby ラッパー
+│       ├── js/adapter.js         # JS 側 host (WASM imports 実装 + boot/evalRuby)
+│       └── wasm_spec/            # gem 自前のテスト (test/ ではない: mruby-test 衝突回避)
+│           ├── spec_helper.rb
+│           ├── runner.mjs
+│           └── test_*.rb
 ├── stubs/                  # POSIX header の最小スタブ
 ├── main/main.c             # mrb_open() のみ、JS が evalRuby で driving
 ├── app/                    # lib/*.rb の mruby ポート版 (Phase 2d)
@@ -38,8 +44,7 @@ spike/
 │   ├── player.rb
 │   └── kotoyomi.rb
 ├── vendor/                 # gitignored、wasi-sdk download/extract
-└── host/
-    ├── adapter.js                # JS host adapter (handle table + imports)
+└── host/                   # ── spike (gem を使う consumer) のデモアセット ──
     ├── boot-kotoyomi.js          # kotoyomi sample 用 boot (.rb fetch + evalRuby)
     ├── index.html                # spike のランディング
     ├── phase2c.html              # Phase 2c 機能の boot-only smoke
@@ -52,6 +57,10 @@ spike/
     ├── run-kotoyomi-node.mjs     # kotoyomi 起動シナリオの Node smoke
     └── mruby.wasm                # gitignored、ビルド成果
 ```
+
+`adapter.js` は **gem 内部** (`mrbgem/mruby-js-bridge/js/adapter.js`) に
+あります。spike 側 (`host/*.js`、`host/*.html`) はそれを相対パスで
+import する consumer です。
 
 ## Build
 
@@ -74,8 +83,22 @@ make serve      # docroot は spike/、http://localhost:8001/host/sample/ へ
   Promise.then、addEventListener+once) の boot-only smoke
 - http://localhost:8001/host/ — 上記へのリンク集
 
-`debug.trace = true` を `adapter.js` で有効にすると、handle release / callback
-発火を console に出します (デフォルトは off)。
+`debug.trace = true` を `mrbgem/mruby-js-bridge/js/adapter.js` で有効にすると、
+handle release / callback 発火を console に出します (デフォルトは off)。
+
+## gem 単体のテスト
+
+```bash
+make test                                # spike Makefile 経由 (link → wasm_spec/runner.mjs)
+node mrbgem/mruby-js-bridge/wasm_spec/runner.mjs   # 直接実行
+```
+
+別プロジェクトの wasm を使いたい場合は env var で指定:
+
+```bash
+MRUBY_JS_BRIDGE_WASM=/abs/path/to/mruby.wasm \
+  node mrbgem/mruby-js-bridge/wasm_spec/runner.mjs
+```
 
 ## Node での smoke
 

@@ -86,7 +86,7 @@ serve:
 	# or http://localhost:8001/host/ for the spike test landing page.
 
 test: link
-	node test/runner.mjs
+	node mrbgem/mruby-js-bridge/wasm_spec/runner.mjs
 
 clean:
 	rm -rf $(MRUBY_DIR)/build/wasi

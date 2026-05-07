@@ -289,7 +289,8 @@ node host/run-kotoyomi-node.mjs  # kotoyomi 起動シナリオ (poem.children: 2
 | `spike/mrbgem/mruby-js-bridge/src/js_bridge.c` | C primitive + `js_bridge_eval_handle` export (約 350 行) |
 | `spike/mrbgem/mruby-js-bridge/mrblib/js_bridge.rb` | Ruby ラッパー、BasicObject ベース (143 行) |
 | `spike/main/main.c` | `mrb_open()` だけ (SCRIPT 埋込みは廃止、Phase 2d) |
-| `spike/host/adapter.js` | JS host adapter、handle table、imports、`evalRuby`、`debug.trace` (約 305 行) |
+| `spike/mrbgem/mruby-js-bridge/js/adapter.js` | JS host adapter、handle table、imports、`evalRuby`、`debug.trace` (約 305 行)。再配布性確保のため gem 内へ移動済み |
+| `spike/mrbgem/mruby-js-bridge/wasm_spec/` | gem 自前の test 一式 (spec_helper + 9 ファイル + runner.mjs)。`make test` または `node .../wasm_spec/runner.mjs` で実行 |
 | `spike/host/boot-kotoyomi.js` | kotoyomi sample 用の boot エントリ (`.rb` fetch + evalRuby) |
 | `spike/host/sample/index.html` | kotoyomi player の HTML (`works/sample/index.html` と同等) |
 | `spike/host/run-node.mjs` | Phase 2c 機能の Node smoke |

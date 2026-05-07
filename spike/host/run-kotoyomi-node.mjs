@@ -8,7 +8,7 @@
 
 import { readFile } from "node:fs/promises";
 import { fileURLToPath } from "node:url";
-import { boot, evalRuby } from "./adapter.js";
+import { boot, evalRuby } from "../mrbgem/mruby-js-bridge/js/adapter.js";
 
 // --- Minimal DOM/Audio/Event shims -----------------------------------------
 class FakeNode {
