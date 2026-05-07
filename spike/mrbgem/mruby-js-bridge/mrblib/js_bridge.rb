@@ -71,6 +71,17 @@ module JSBridge
       items.each { |item| arr.push(item) }
       arr
     end
+
+    # Non-raising variant of #wrap. Returns the wrapped Value if the
+    # argument is convertible (one of the types #wrap recognises), or
+    # `nil` if it isn't. Useful for libraries that want to optionally
+    # accept JS values:
+    #   if (jsv = JSBridge.try_convert(arg)); use_as_js(jsv); ...
+    def try_convert(v)
+      wrap(v)
+    rescue ArgumentError
+      nil
+    end
   end
 
   class Value
@@ -154,6 +165,20 @@ module JSBridge
     # one that reflects the wrapped JS value (== null in JS lands here).
     def nil?
       JSBridge._is_null(handle)
+    end
+
+    # Explicit stub for ruby.wasm's `await`. mruby has no fiber-based
+    # Asyncify so we can't transparently block on a Promise. Raises with
+    # a pointer to the supported alternatives instead of silently going
+    # through method_missing (which would produce a cryptic JS error).
+    # ::Kernel.raise because Value < BasicObject (no Kernel#raise).
+    def await
+      ::Kernel.raise(
+        ::NotImplementedError,
+        "JSBridge has no #await (mruby lacks Asyncify). " \
+        "Use `promise.then { |v| ... }` for value-flavored async, or " \
+        "`target.on(event, JSBridge.object(once: true)) { ... }` for one-shot events.",
+      )
     end
 
     # JS-side strict equality (===) returning a Ruby boolean.
