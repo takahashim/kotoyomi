@@ -25,6 +25,7 @@
 #include <mruby/class.h>
 #include <mruby/proc.h>
 #include <mruby/throw.h>
+#include <mruby/variable.h>
 
 /* ---------- WASM imports (js_bridge.* — implemented in adapter.js) ---------- */
 
@@ -69,25 +70,45 @@ static mrb_value g_value_class_obj; /* cached JSBridge::Value */
 static mrb_value g_error_class_obj; /* cached JSBridge::Error */
 static int g_next_callback_id = 1;
 
-/* If the JS adapter has stashed an error from the most recent js_call /
- * js_new / js_eval, raise JSBridge::Error with its message. Called at
- * the end of each primitive that can dispatch to JS. */
-static void
-raise_if_js_error(mrb_state *mrb) {
-  int err_h = js_take_error();
-  if (err_h == 0) return;
-  int len = js_to_string_len(err_h);
+/* Forward declaration — defined after the Value class section. */
+static mrb_value wrap_handle(mrb_state *mrb, int handle);
+
+/* Read the JS Error object's `.message` property as an mrb String. */
+static mrb_value
+extract_error_message(mrb_state *mrb, int err_h) {
+  int msg_h = js_get(err_h, "message", 7);
+  int len = js_to_string_len(msg_h);
   mrb_value msg;
   if (len <= 0) {
     msg = mrb_str_new_lit(mrb, "JS error");
   } else {
     char *buf = (char *)mrb_malloc(mrb, (size_t)len);
-    js_to_string_copy(err_h, buf, len);
+    js_to_string_copy(msg_h, buf, len);
     msg = mrb_str_new(mrb, buf, len);
     mrb_free(mrb, buf);
   }
-  js_release(err_h);
-  mrb_raise(mrb, mrb_class_ptr(g_error_class_obj), mrb_string_value_cstr(mrb, &msg));
+  js_release(msg_h);
+  return msg;
+}
+
+/* If the JS adapter has stashed an error from the most recent js_call /
+ * js_new / js_eval, raise JSBridge::Error with the JS Error's `.message`
+ * as the Ruby exception message AND the original JS Error attached as
+ * @js_value (so users can read .name / .stack / .cause / etc. from
+ * Ruby). Called at the end of each primitive that can dispatch to JS. */
+static void
+raise_if_js_error(mrb_state *mrb) {
+  int err_h = js_take_error();
+  if (err_h == 0) return;
+
+  mrb_value msg = extract_error_message(mrb, err_h);
+  /* wrap_handle takes ownership: Value's GC free callback will release. */
+  mrb_value js_err_value = wrap_handle(mrb, err_h);
+
+  /* Construct JSBridge::Error.new(msg) and attach @js_value. */
+  mrb_value exc = mrb_funcall(mrb, g_error_class_obj, "new", 1, msg);
+  mrb_iv_set(mrb, exc, mrb_intern_lit(mrb, "@js_value"), js_err_value);
+  mrb_exc_raise(mrb, exc);
 }
 
 /* ---------- JSBridge::Value (data type) ---------- */

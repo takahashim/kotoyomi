@@ -195,13 +195,20 @@ const jsBridgeImports = {
   },
 
   // Take and clear the most recent JS error. Returns 0 if no error
-  // pending; otherwise returns a handle to a string with the error
-  // message (consumed — second call returns 0 unless a new error fires).
+  // pending; otherwise returns a handle to the Error VALUE itself
+  // (consumed — second call returns 0 unless a new error fires).
+  // Ruby side wraps it as a JSBridge::Value so callers can inspect
+  // `.name`, `.stack`, `.cause`, etc. via `JSBridge::Error#js_value`.
+  // Non-Error throws (`throw "string"`, `throw 42`, ...) are wrapped in
+  // an Error so the caller always gets an object with a `.message`.
   js_take_error() {
     if (pendingError == null) return 0;
-    const err = pendingError;
+    let err = pendingError;
     pendingError = null;
-    return alloc(String(err && err.message ? err.message : err));
+    if (!(err instanceof Error)) {
+      err = new Error(String(err));
+    }
+    return alloc(err);
   },
 
   // Get UTF-8 byte length of stringification (so caller can allocate buffer).

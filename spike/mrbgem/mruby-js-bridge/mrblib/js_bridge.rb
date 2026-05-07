@@ -12,6 +12,16 @@
 #   doc.call(:getElementById, "audio")
 
 module JSBridge
+  # JSBridge::Error is defined in C (extends StandardError). Reopen it
+  # here to expose the original JS Error object via #js_value, attached
+  # by raise_if_js_error in C. Lets users read .name / .stack / .cause:
+  #   rescue JSBridge::Error => e
+  #     puts e.js_value[:name].to_s   # => "TypeError"
+  #     puts e.js_value[:stack].to_s  # => "TypeError: ...\n  at ..."
+  class Error
+    attr_reader :js_value
+  end
+
   # Ivars on the JSBridge module itself (not its singleton class) — must
   # be initialised here in module body so the class-method readers below
   # see the same object.
