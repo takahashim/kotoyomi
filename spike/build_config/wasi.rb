@@ -56,11 +56,21 @@ MRuby::CrossBuild.new("wasi") do |conf|
   # without pulling in mruby-socket (needs netdb.h) etc.
   conf.gembox "default-no-stdio"
 
-  # Drop mruby-regexp: its mrblib redefines String#split (and friends) in
-  # Ruby and falls back to `super` for plain-string patterns, but `super`
-  # on the same class can't find the C-level mrb_str_split_m it shadowed,
-  # producing "no superclass method 'split' for String". We don't need
-  # regexp support, so just remove it.
+  # Drop mruby-regexp.
+  #
+  # Upstream bug (mruby HEAD as of 2026-05): mrblib/string_regexp.rb
+  # redefines String#split in Ruby, then falls back to `super` for
+  # plain-string patterns. mruby's method table (class.c:mt_put)
+  # overwrites the existing C-level mrb_str_split_m entry on String, and
+  # OP_SUPER (vm.c) walks to String->super (Object) which has no split.
+  # Net result: `"a\nb".split("\n")` raises
+  # `NoMethodError: no superclass method 'split' for String`.
+  # The gem's own tests only exercise the Regexp-pattern path, so the
+  # super fallback isn't covered.
+  #
+  # kotoyomi doesn't need regex support, so the cleanest workaround is
+  # to drop the gem entirely. (Restore once upstream aliases the C
+  # method via `alias __core_split split` before redefinition.)
   conf.gems.instance_variable_get(:@ary).reject! { |g| g.name == "mruby-regexp" }
 
   # mrb_load_string requires the parser, which lives in mruby-compiler.

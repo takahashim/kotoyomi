@@ -172,13 +172,43 @@ mruby は標準で fiber/Asyncify を持たないため、ruby.wasm の `JS.eval
 
 **解決**: `kotoyomi_invoke_proc` で自前の `struct mrb_jmpbuf` を立て、`MRB_TRY/CATCH/MRB_END_EXC` で囲う。catch 側で `mrb_print_error` + `mrb->exc = NULL` してから抜ける
 
-### (7) `mruby-regexp` が `String#split` を破壊
+### (7) `mruby-regexp` の `String#split` が `super` で C 実装を見失う (upstream バグ)
 
-**症状**: `"a\nb".split("\n")` が `no superclass method 'split' for String (NoMethodError)`
+**症状**: `"a\nb".split("\n")` が `NoMethodError: no superclass method 'split' for String`
 
-**原因**: `mruby-regexp` の mrblib (`string_regexp.rb`) が `String#split` を Ruby で再定義し、`pattern` が String の場合 `super` で C 実装に落とす作り。だが core string.c が定義した `mrb_str_split_m` と同じ String クラスへの override なので、`super` は親クラス (Object) を見にいき、そこには split が無い
+**原因 (mruby-regexp 側のバグ)**:
 
-**解決**: kotoyomi では regexp 不要なので `conf.gems.instance_variable_get(:@ary).reject! { |g| g.name == "mruby-regexp" }` で除外。stdlib gembox から個別の gem を抜く API は MRuby::Build に無いので ivar 経由で直接いじる必要あり
+1. core `mruby/src/string.c` が `mrb_define_method(String, "split", mrb_str_split_m)` で C 実装を登録
+2. `mrbgems/mruby-regexp/mrblib/string_regexp.rb` が `class String; def split(pattern = nil, limit = -1); ... end` で同じ String クラス上に Ruby 版 split を定義
+3. mruby の method table (`class.c:mt_put`) はキー重複時に **既存エントリを上書き** する。チェーン保持はしない (`entries[i].val = ptrval; return`)。よって C 実装の登録は消える
+4. mrblib の split は plain-string pattern の場合 `return super if pattern.length == 1 || !pattern.include?('\\')` で C 実装に落とそうとする
+5. mruby の `OP_SUPER` (`vm.c`) は **呼び出し元メソッドの定義クラスの親クラス** から探索を開始する: `ci->u.target_class = ... CI_TARGET_CLASS(ci - 1)->super`
+6. 呼び出し元の定義クラスは String なので、`String.super == Object` から探索 → Object に split 無し → エラー
+
+mruby-regexp の test (`mrbgems/mruby-regexp/test/regexp.rb`) は Regexp pattern (`/,\s*/`) しか試しておらず、super フォールバック経路は **テストで踏まれていない** ので、この破壊が gem 配布まで残っている。
+
+**解決**: 我々の用途では regexp 不要なので、`build_config/wasi.rb` で gembox 注入後に gem 一覧から除外:
+
+```ruby
+conf.gembox "default-no-stdio"
+conf.gems.instance_variable_get(:@ary).reject! { |g| g.name == "mruby-regexp" }
+```
+
+stdlib gembox から個別 gem を抜く公式 API が `MRuby::Build` に無いので、`Gem::List` の `@ary` ivar を直接いじる必要あり。
+
+**上流に出すなら**:
+
+```ruby
+class String
+  alias __core_split split   # 再定義前に C 実装を別名で保存
+  def split(pattern = nil, limit = -1)
+    return __core_split(pattern, limit) if pattern.nil? || ...
+    ...
+  end
+end
+```
+
+のような `alias` パターンが正しい。super は使えない (mruby の method 上書きセマンティクス上)。
 
 ## 5. ハマらなかった/楽だった点
 
