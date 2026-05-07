@@ -135,6 +135,21 @@ module JSBridge
       JSBridge._to_float(handle)
     end
 
+    # Already a JS value — `to_js` is a no-op pass-through. Lets users
+    # write `[hash, array, value].map(&:to_js)` uniformly without
+    # special-casing already-wrapped values.
+    def to_js
+      self
+    end
+
+    # Length of an array-like JS value (Array, NodeList, arguments, ...).
+    # Reads the `length` property and coerces to int. For Map/Set use
+    # `value[:size].to_i` directly since they expose `size`, not `length`.
+    def length
+      self[:length].to_i
+    end
+    alias_method :size, :length
+
     # JS null / undefined detection. BasicObject has no nil?, so define
     # one that reflects the wrapped JS value (== null in JS lands here).
     def nil?
@@ -235,4 +250,19 @@ module JSBridge
       end
     end
   end
+
+  # Mixin that delegates #to_js to JSBridge.wrap. Included into the
+  # standard wrappable classes below so callers can write `hash.to_js`,
+  # `[1,2,3].to_js`, `:foo.to_js`, etc. for symmetry with JSBridge::Value#to_js.
+  module ToJSMixin
+    def to_js
+      JSBridge.wrap(self)
+    end
+  end
+end
+
+# Extend the standard Ruby types that JSBridge.wrap handles. Picked to
+# match ruby.wasm's Hash/Array/Symbol/etc.#to_js extensions.
+[Hash, Array, Symbol, String, Integer, Float, TrueClass, FalseClass, NilClass].each do |klass|
+  klass.include(JSBridge::ToJSMixin)
 end
