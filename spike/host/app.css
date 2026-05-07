@@ -1,0 +1,105 @@
+html,
+body {
+  margin: 0;
+  padding: 0;
+  background: #faf7f2;
+  color: #222;
+  font-family: "Hiragino Mincho ProN", "Yu Mincho", serif;
+}
+
+.app {
+  display: flex;
+  flex-direction: column;
+  gap: 1rem;
+  padding: 1rem;
+  min-height: 100vh;
+  box-sizing: border-box;
+}
+
+.poem-viewport {
+  height: 80vh;
+  display: flex;
+  align-items: flex-start;
+  justify-content: center;
+  padding-top: 2rem;
+  box-sizing: border-box;
+  background: #fffdf8;
+  border: 1px solid #e6e0d4;
+  overflow: hidden;
+}
+
+.poem {
+  writing-mode: vertical-rl;
+  text-orientation: mixed;
+  line-height: 2.2;
+  font-size: 28px;
+  letter-spacing: 0.08em;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.stanza {
+  display: none;
+  margin: 0;
+  text-align: center;
+}
+
+.stanza.active {
+  display: flex;
+  flex-direction: row;
+  align-items: center;
+  gap: 0.4em;
+  font-weight: 600;
+  animation: stanza-fade-in 2.0s ease-out;
+}
+
+@keyframes stanza-fade-in {
+  from {
+    opacity: 0;
+  }
+  to {
+    opacity: 1;
+  }
+}
+
+.stanza-line {
+  margin: 0;
+}
+
+audio {
+  width: 100%;
+}
+
+.controls {
+  display: flex;
+  justify-content: center;
+}
+
+.controls button {
+  font: inherit;
+  padding: 0.5rem 1.25rem;
+  border: 1px solid #c8bfae;
+  background: #fffdf8;
+  color: #222;
+  border-radius: 4px;
+  cursor: pointer;
+  transition: background 0.15s ease;
+}
+
+.controls button:hover {
+  background: #f3eddf;
+}
+
+.controls button:active {
+  background: #e8dfca;
+}
+
+.error {
+  color: #b00020;
+  background: #fff0f0;
+  border: 1px solid #f3c5c5;
+  padding: 0.75rem 1rem;
+  margin: 0;
+  white-space: pre-wrap;
+}

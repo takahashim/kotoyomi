@@ -1,0 +1,28 @@
+<!DOCTYPE html>
+<html lang="ja">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Kotoyomi sample (mruby bridge)</title>
+    <link rel="stylesheet" href="../app.css" />
+  </head>
+  <body>
+    <main class="app">
+      <section class="poem-viewport">
+        <div id="poem" class="poem"></div>
+      </section>
+
+      <audio id="audio" controls crossorigin="anonymous" src="poems/sample.mp3">
+        <track id="track" kind="metadata" src="poems/sample.vtt" default />
+      </audio>
+
+      <div class="controls">
+        <button id="reset" type="button">最初に戻る</button>
+      </div>
+
+      <p id="error" class="error" hidden></p>
+    </main>
+
+    <script type="module" src="../boot-kotoyomi.js"></script>
+  </body>
+</html>
