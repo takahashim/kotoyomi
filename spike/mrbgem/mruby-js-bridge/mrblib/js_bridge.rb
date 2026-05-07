@@ -116,6 +116,13 @@ module JSBridge
       result
     end
 
+    # Call a JS method with arguments from an Array. Mirrors ruby.wasm's
+    # JS::Object#apply (and JS's Function.prototype.apply semantics — the
+    # array is spread as positional args, not passed as a single arg).
+    def apply(method, args_array, &block)
+      call(method, *args_array, &block)
+    end
+
     def to_s
       JSBridge._to_string(handle)
     end
