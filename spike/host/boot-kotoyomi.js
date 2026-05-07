@@ -7,7 +7,7 @@
 //   3. evalRuby(source) for each one
 //   4. evalRuby("Kotoyomi.start")
 //
-// The Ruby files themselves expect `JS = Kotoyomi::JS` (the alias is set
+// The Ruby files themselves expect `JS = JSBridge` (the alias is set
 // at the top of dom.rb so subsequent files don't need to re-set it).
 
 import { boot, evalRuby } from "./adapter.js";

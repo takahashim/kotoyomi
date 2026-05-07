@@ -82,11 +82,11 @@ MRuby::CrossBuild.new("wasi") do |conf|
   conf.gem core: "mruby-io"
 
   # mruby-method enables Object#method_missing dispatch (used by
-  # Kotoyomi::JS::Value to forward unknown method calls to JS).
+  # JSBridge::Value to forward unknown method calls to JS).
   conf.gem core: "mruby-method"
 
-  # Our spike mrbgem
-  conf.gem File.expand_path("../mrbgem/kotoyomi-js", __dir__)
+  # Our spike mrbgem (mruby ↔ JS bridge)
+  conf.gem File.expand_path("../mrbgem/mruby-js-bridge", __dir__)
 
   # We only need libmruby.a; the spike provides its own main via main/main.c
   conf.bins = []

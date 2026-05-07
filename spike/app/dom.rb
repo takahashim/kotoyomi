@@ -7,7 +7,7 @@
 #    (the C-side callback table pins the Proc, but the JS wrapper handle
 #    needs a Ruby-side rooter).
 
-JS = Kotoyomi::JS
+JS = JSBridge
 
 module Kotoyomi
   module DOM

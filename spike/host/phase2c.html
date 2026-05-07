@@ -21,7 +21,7 @@
       try {
         await boot("./mruby.wasm");
         const SCRIPT = `
-          JS = Kotoyomi::JS
+          JS = JSBridge
           doc = JS.global[:document]
           doc.title = 'Phase 2c OK'
           n = JS.eval('1.5 + 2.25').to_f

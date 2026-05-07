@@ -1,18 +1,18 @@
 /*
- * kotoyomi-js: JS bridge for mruby (Phase 2a + auto-release + callbacks)
+ * mruby-js-bridge: minimal mruby ↔ JavaScript bridge for WASM hosts.
  *
- * Kotoyomi::JS::Value is a C-backed (MRB_TT_DATA) class. Each instance
- * owns a JS handle; when the Ruby object is collected by mruby's GC,
- * the free callback releases the JS handle automatically.
+ * JSBridge::Value is a C-backed (MRB_TT_DATA) class. Each instance owns
+ * a JS handle; when the Ruby object is collected by mruby's GC, the
+ * free callback releases the JS handle automatically.
  *
- * Ruby blocks/procs can be passed as JS callbacks via JS.callback(&block).
+ * Ruby blocks/procs can be passed as JS callbacks via JSBridge.callback(&block).
  * The block is registered in a callback table (kept alive across calls)
  * and a JS wrapper function is created on the host side. When the wrapper
- * fires, JS calls back into mruby via the `kotoyomi_invoke_proc` export.
+ * fires, JS calls back into mruby via the `js_bridge_invoke_proc` export.
  *
- * Underscore-prefixed module functions on Kotoyomi::JS are low-level
- * primitives that operate on raw integer handles. The Ruby-friendly
- * API lives in mrblib/kotoyomi_js.rb.
+ * Underscore-prefixed module functions on JSBridge are low-level primitives
+ * that operate on raw integer handles. The Ruby-friendly API lives in
+ * mrblib/js_bridge.rb.
  */
 
 #include <mruby.h>
@@ -24,10 +24,10 @@
 #include <mruby/proc.h>
 #include <mruby/throw.h>
 
-/* ---------- WASM imports (kotoyomi.* — implemented in adapter.js) ---------- */
+/* ---------- WASM imports (js_bridge.* — implemented in adapter.js) ---------- */
 
 #define IMPORT(name) \
-  __attribute__((import_module("kotoyomi"), import_name(#name))) extern
+  __attribute__((import_module("js_bridge"), import_name(#name))) extern
 
 IMPORT(js_eval) int js_eval(const char *src, int len);
 IMPORT(js_global) int js_global(void);
@@ -52,10 +52,10 @@ IMPORT(js_make_callback) int js_make_callback(int callback_id);
 
 static mrb_state *g_mrb = NULL;
 static mrb_value g_callback_table; /* Ruby Hash, lazily created */
-static mrb_value g_value_class_obj; /* cached Kotoyomi::JS::Value */
+static mrb_value g_value_class_obj; /* cached JSBridge::Value */
 static int g_next_callback_id = 1;
 
-/* ---------- Kotoyomi::JS::Value (data type) ---------- */
+/* ---------- JSBridge::Value (data type) ---------- */
 
 typedef struct {
   int handle;
@@ -73,7 +73,7 @@ js_value_free(mrb_state *mrb, void *ptr) {
 }
 
 static const struct mrb_data_type js_value_type = {
-  "Kotoyomi::JS::Value",
+  "JSBridge::Value",
   js_value_free,
 };
 
@@ -93,7 +93,7 @@ mrb_js_value_handle(mrb_state *mrb, mrb_value self) {
   return mrb_fixnum_value(v->handle);
 }
 
-/* Helper: wrap an int handle as a Kotoyomi::JS::Value object. */
+/* Helper: wrap an int handle as a JSBridge::Value object. */
 static mrb_value
 wrap_handle(mrb_state *mrb, int handle) {
   mrb_value handle_val = mrb_fixnum_value(handle);
@@ -230,7 +230,7 @@ ensure_callback_table(mrb_state *mrb) {
   mrb_gc_register(mrb, g_callback_table);
 }
 
-/* Kotoyomi::JS._make_callback(proc) -> int handle (for the JS wrapper) */
+/* JSBridge._make_callback(proc) -> int handle (for the JS wrapper) */
 static mrb_value
 mrb_js_make_callback(mrb_state *mrb, mrb_value self) {
   mrb_value proc;
@@ -243,14 +243,6 @@ mrb_js_make_callback(mrb_state *mrb, mrb_value self) {
 }
 
 /*
- * WASM export: invoked by the JS wrapper function when its callback fires.
- *
- * - callback_id: id assigned in mrb_js_make_callback
- * - args_handle: JS array of the actual call arguments
- *
- * Looks up the Ruby Proc, wraps each JS arg as a Value, and yields.
- */
-/*
  * WASM export: JS calls this with a handle to a Ruby source string.
  * mruby loads/parses/executes it; on parse/runtime error, prints to
  * stderr and returns 1 (so the host can show an error).
@@ -258,9 +250,9 @@ mrb_js_make_callback(mrb_state *mrb, mrb_value self) {
  * Lets us boot mruby once at _start and then load .rb files lazily
  * from JS, instead of embedding a single hardcoded SCRIPT in main.c.
  */
-__attribute__((export_name("kotoyomi_eval_handle")))
+__attribute__((export_name("js_bridge_eval_handle")))
 int
-kotoyomi_eval_handle(int src_handle) {
+js_bridge_eval_handle(int src_handle) {
   if (!g_mrb) return 1;
   mrb_state *mrb = g_mrb;
   int len = js_to_string_len(src_handle);
@@ -278,9 +270,17 @@ kotoyomi_eval_handle(int src_handle) {
   return 0;
 }
 
-__attribute__((export_name("kotoyomi_invoke_proc")))
+/*
+ * WASM export: invoked by the JS wrapper function when its callback fires.
+ *
+ * - callback_id: id assigned in mrb_js_make_callback
+ * - args_handle: JS array of the actual call arguments
+ *
+ * Looks up the Ruby Proc, wraps each JS arg as a Value, and yields.
+ */
+__attribute__((export_name("js_bridge_invoke_proc")))
 int
-kotoyomi_invoke_proc(int callback_id, int args_handle) {
+js_bridge_invoke_proc(int callback_id, int args_handle) {
   if (!g_mrb || !mrb_hash_p(g_callback_table)) return 0;
   mrb_state *mrb = g_mrb;
 
@@ -331,12 +331,11 @@ kotoyomi_invoke_proc(int callback_id, int args_handle) {
 /* ---------- Gem init ---------- */
 
 void
-mrb_kotoyomi_js_gem_init(mrb_state *mrb) {
+mrb_mruby_js_bridge_gem_init(mrb_state *mrb) {
   g_mrb = mrb;
   g_callback_table = mrb_nil_value();
 
-  struct RClass *kotoyomi = mrb_define_module(mrb, "Kotoyomi");
-  struct RClass *js = mrb_define_module_under(mrb, kotoyomi, "JS");
+  struct RClass *js = mrb_define_module(mrb, "JSBridge");
 
   /* Value class — BasicObject subclass so method_missing forwards almost
      everything to JS without colliding with Object's methods (then, tap,
@@ -349,7 +348,7 @@ mrb_kotoyomi_js_gem_init(mrb_state *mrb) {
   g_value_class_obj = mrb_obj_value(value);
   mrb_gc_register(mrb, g_value_class_obj);
 
-  /* Low-level primitives. The Ruby-side wrapper is in mrblib/kotoyomi_js.rb. */
+  /* Low-level primitives. The Ruby-side wrapper is in mrblib/js_bridge.rb. */
   mrb_define_module_function(mrb, js, "_eval", mrb_js_eval, MRB_ARGS_REQ(1));
   mrb_define_module_function(mrb, js, "_global", mrb_js_global, MRB_ARGS_NONE());
   mrb_define_module_function(mrb, js, "_release", mrb_js_release, MRB_ARGS_REQ(1));
@@ -367,7 +366,7 @@ mrb_kotoyomi_js_gem_init(mrb_state *mrb) {
 }
 
 void
-mrb_kotoyomi_js_gem_final(mrb_state *mrb) {
+mrb_mruby_js_bridge_gem_final(mrb_state *mrb) {
   /* Per-Value handles are released by mruby GC via js_value_free.
      Anything still alive at mrb_close gets freed during final GC sweep. */
 }

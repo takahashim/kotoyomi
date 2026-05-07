@@ -6,13 +6,13 @@
 
 ## 1. 目的と成功条件
 
-Phase 1 で「自前 mrbgem で `Kotoyomi::JS.eval` が動く」ところまでは行ったが、kotoyomi 本体を載せ替えるには get/set/call/callback/Float/object literal/null 判定など多数の primitive が必要。
+Phase 1 で「自前 mrbgem で `JSBridge.eval` が動く」ところまでは行ったが、kotoyomi 本体を載せ替えるには get/set/call/callback/Float/object literal/null 判定など多数の primitive が必要。
 
 このフェーズでは、`docs/mruby-bridge.md` で「Phase 2 で必要」とした API を一式実装し、ruby.wasm の `js` gem に書かれているのと同等の Ruby らしい使用感 (`obj.method(arg)`, `obj[:key] = v`, `obj.then { ... }`) を mruby + 自前ブリッジで成立させる。
 
 成功条件:
 
-1. `Kotoyomi::JS::Value` が C-backed (MRB_TT_DATA) で、Ruby GC で JS handle が自動 release される
+1. `JSBridge::Value` が C-backed (MRB_TT_DATA) で、Ruby GC で JS handle が自動 release される
 2. ruby.wasm 互換の API (`global`, `[]/[]=`, `.call`, `to_s/to_i/to_f`, `nil?`, `on`) が動く
 3. ruby.wasm 同様 `BasicObject` サブクラスにして、Object 由来メソッド (`then`, `tap`, `==`) との衝突なく `method_missing` で JS にディスパッチできる
 4. block-as-callback (`elem.on(:click) { ... }`, `promise.then { |v| ... }`) が双方向で動く
@@ -22,7 +22,7 @@ Phase 1 で「自前 mrbgem で `Kotoyomi::JS.eval` が動く」ところまで�
 
 ## 2. 達成した最終構成
 
-### Ruby 側 API (`mrblib/kotoyomi_js.rb`, 143 行)
+### Ruby 側 API (`mrblib/js_bridge.rb`, 143 行)
 
 | API | 役割 |
 |---|---|
@@ -38,13 +38,13 @@ Phase 1 で「自前 mrbgem で `Kotoyomi::JS.eval` が動く」ところまで�
 | `Value#on(event, options=nil, &block)` | `addEventListener` のエルゴノミック alias |
 | `Value#method_missing` | `obj.method(args)` / `obj.attr = v` / `obj.predicate?` を JS にフォワード |
 
-### C 側 primitive (`mrbgem/kotoyomi-js/src/kotoyomi_js.c`, 335 行)
+### C 側 primitive (`mrbgem/mruby-js-bridge/src/js_bridge.c`, 335 行)
 
 15 個の WASM imports と Ruby から呼ぶ C 関数:
 
 - 値変換: `_eval`, `_global`, `_release`, `_get`, `_set`, `_call`
 - スカラ往復: `_to_string`, `_from_string`, `_to_int`, `_from_int`, `_to_float`, `_from_float`, `_is_null`
-- callback: `_make_callback`, `kotoyomi_invoke_proc` (export)
+- callback: `_make_callback`, `js_bridge_invoke_proc` (export)
 
 ### JS 側 adapter (`host/adapter.js`, 296 行)
 
@@ -61,7 +61,7 @@ Phase 1 で「自前 mrbgem で `Kotoyomi::JS.eval` が動く」ところまで�
 
 ### Phase 2a — primitive の API 化
 
-最初は整数 handle を直接 Ruby から触る薄い実装。`_eval`/`_global`/`_get`/`_set`/`_call`/`_to_string`/`_from_string` を C で実装、Ruby 側に `Kotoyomi::JS::Value` を **mrblib の純 Ruby** で定義 (`@handle` を ivar 保持)。これだけで `JS.global[:document][:title] = "..."` が書けるようになった。
+最初は整数 handle を直接 Ruby から触る薄い実装。`_eval`/`_global`/`_get`/`_set`/`_call`/`_to_string`/`_from_string` を C で実装、Ruby 側に `JSBridge::Value` を **mrblib の純 Ruby** で定義 (`@handle` を ivar 保持)。これだけで `JS.global[:document][:title] = "..."` が書けるようになった。
 
 ### Phase 2b — Value を C-backed (MRB_TT_DATA) 化 + 自動 release
 
@@ -71,13 +71,13 @@ Phase 1 で「自前 mrbgem で `Kotoyomi::JS.eval` が動く」ところまで�
 
 ### Phase 2c — block-as-callback (双方向 marshalling)
 
-`JS.callback(&block)` が Ruby Proc を C 側のコールバックテーブル (Hash、`mrb_gc_register` で pin) に登録し、JS 側に integer id を渡して `js_make_callback(id)` で wrapper function を生成。wrapper が呼ばれると `instance.exports.kotoyomi_invoke_proc(id, args_handle)` で mruby に戻り、登録済み Proc を `mrb_yield_argv` で呼び出す。
+`JS.callback(&block)` が Ruby Proc を C 側のコールバックテーブル (Hash、`mrb_gc_register` で pin) に登録し、JS 側に integer id を渡して `js_make_callback(id)` で wrapper function を生成。wrapper が呼ばれると `instance.exports.js_bridge_invoke_proc(id, args_handle)` で mruby に戻り、登録済み Proc を `mrb_yield_argv` で呼び出す。
 
 これにより `elem.addEventListener("click") { |ev| ... }` や `promise.then { |v| ... }` が成立。
 
 #### 副題: BasicObject 化
 
-ruby.wasm の `JS::Object` と同じく、`Kotoyomi::JS::Value < BasicObject` に変更。理由:
+ruby.wasm の `JS::Object` と同じく、`JSBridge::Value < BasicObject` に変更。理由:
 
 - `Object#then` は `yield_self` の alias で、引数の block を yield して返す。これがあると `promise.then { ... }` が JS にディスパッチされず、mruby 側で同期 yield されてしまう
 - `Object#tap`/`itself`/`==`/`inspect` も同様の衝突を起こす
@@ -103,10 +103,10 @@ mruby は標準で fiber/Asyncify を持たないため、ruby.wasm の `JS.eval
 
 #### 主な変更点
 
-1. **JS 駆動のロード機構** — main.c から SCRIPT 埋込みを撤去、`mrb_open()` だけ呼んで生かしておき、JS 側が `kotoyomi_eval_handle(handle)` export 経由で `.rb` を 1 ファイルずつ送り込む。`evalRuby(source)` ヘルパを adapter.js に追加
-2. **callback 内例外の捕捉** — `kotoyomi_invoke_proc` で `MRB_TRY/CATCH` を仕掛けて、Ruby 例外が SJLJ longjmp で wasm boundary を越えて host を `unreachable` でクラッシュさせないようにした
+1. **JS 駆動のロード機構** — main.c から SCRIPT 埋込みを撤去、`mrb_open()` だけ呼んで生かしておき、JS 側が `js_bridge_eval_handle(handle)` export 経由で `.rb` を 1 ファイルずつ送り込む。`evalRuby(source)` ヘルパを adapter.js に追加
+2. **callback 内例外の捕捉** — `js_bridge_invoke_proc` で `MRB_TRY/CATCH` を仕掛けて、Ruby 例外が SJLJ longjmp で wasm boundary を越えて host を `unreachable` でクラッシュさせないようにした
 3. **`wait_for_track_load` の書き換え** — `JS.eval(...).await` をやめて、`@track_el.on(:load, JS.object(once: true)) { proceed.call }` の callback パターンに。`App#start` は同期セットアップ + listener 登録だけ行い、本体処理は `on_track_loaded` に分離
-4. **listener wrapper の rooting** — `Kotoyomi::JS::Value#on` が返す callback Value は呼び出し側で保持しないと GC される。`DOM::Element` と `Player` で `@callbacks << @node.on(...)` パターンで生存期間中 pin
+4. **listener wrapper の rooting** — `JSBridge::Value#on` が返す callback Value は呼び出し側で保持しないと GC される。`DOM::Element` と `Player` で `@callbacks << @node.on(...)` パターンで生存期間中 pin
 5. **`mruby-regexp` の除外** — stdlib gembox に含まれる `mruby-regexp` の mrblib が `String#split` を再定義し、plain string 引数で `super` に落とす作りだが、同クラス上の override は super で C 実装に届かず "no superclass method 'split' for String" になる。kotoyomi では regexp 不要なので `conf.gems.instance_variable_get(:@ary).reject!` で削除
 
 #### sample 用ホスティング
@@ -146,11 +146,11 @@ mruby は標準で fiber/Asyncify を持たないため、ruby.wasm の `JS.eval
 
 ### (3) BasicObject 配下で定数が見えない
 
-**症状**: `case v when Integer then ...` が `NameError: uninitialized constant Kotoyomi::JS::Value::Integer`
+**症状**: `case v when Integer then ...` が `NameError: uninitialized constant JSBridge::Value::Integer`
 
-**原因**: lexical nesting は `[Value, JS, Kotoyomi]` だが、constant lookup が cref ancestor を辿ったとき Value の親が BasicObject なので Object に届かない
+**原因**: lexical nesting は `[Value, JSBridge]` だが、constant lookup が cref ancestor を辿ったとき Value の親が BasicObject なので Object に届かない
 
-**解決**: `wrap` を `JS` モジュール関数 (`def self.wrap(v)`) として移動。モジュール本体内では `self == Kotoyomi::JS` で nesting にも cref にも Object が入っているため top-level 定数が見える
+**解決**: `wrap` を `JS` モジュール関数 (`def self.wrap(v)`) として移動。モジュール本体内では `self == JSBridge` で nesting にも cref にも Object が入っているため top-level 定数が見える
 
 ### (4) `puts value.to_s` で内部 `to_s` が呼ばれない
 
@@ -166,11 +166,11 @@ mruby は標準で fiber/Asyncify を持たないため、ruby.wasm の `JS.eval
 
 ### (6) callback 内 Ruby 例外で wasm が `unreachable` クラッシュ
 
-**症状**: `kotoyomi_invoke_proc` 経由で発火した callback の中で例外が起きると、Node が `RuntimeError: unreachable at __wasm_setjmp_test` で落ちる
+**症状**: `js_bridge_invoke_proc` 経由で発火した callback の中で例外が起きると、Node が `RuntimeError: unreachable at __wasm_setjmp_test` で落ちる
 
 **原因**: mruby の例外は SJLJ で実装されており、`mrb_yield_argv` 内で raise されると `mrb->jmp` の jmpbuf へ longjmp する。`mrb_load_string` 経由で呼ばれた場合は parser 側が jmpbuf を仕込むが、wasm export 直下から呼ぶ場合は jmpbuf がなく longjmp が host boundary を escape して `__wasm_setjmp_test` の `unreachable` に到達
 
-**解決**: `kotoyomi_invoke_proc` で自前の `struct mrb_jmpbuf` を立て、`MRB_TRY/CATCH/MRB_END_EXC` で囲う。catch 側で `mrb_print_error` + `mrb->exc = NULL` してから抜ける
+**解決**: `js_bridge_invoke_proc` で自前の `struct mrb_jmpbuf` を立て、`MRB_TRY/CATCH/MRB_END_EXC` で囲う。catch 側で `mrb_print_error` + `mrb->exc = NULL` してから抜ける
 
 ### (7) `mruby-regexp` の `String#split` が `super` で C 実装を見失う (upstream バグ)
 
@@ -220,7 +220,7 @@ end
 
 ### 機能面
 
-- **エラー伝搬** — JS 例外が `js_call` 経由で投げられたとき、現状は `console.error` してから handle 0 を返すだけ。`Kotoyomi::JS::Error < StandardError` を立てて Ruby 側に伝搬させたい (`wait_for_track_load` の `rescue JS::Error` は今は到達不可)
+- **エラー伝搬** — JS 例外が `js_call` 経由で投げられたとき、現状は `console.error` してから handle 0 を返すだけ。`JSBridge::Error < StandardError` を立てて Ruby 側に伝搬させたい (`wait_for_track_load` の `rescue JS::Error` は今は到達不可)
 - **`Value#==`** — 現状は method_missing 経由で JS の `==` にフォワードされる。Ruby らしくは `Value#==` を「同じ JS 値を指すか」で実装するのが妥当
 - **`inspect`** — BasicObject なので `p value` が動かない。デバッグ用に最小実装が欲しい
 
@@ -240,7 +240,7 @@ spike 上で動くことは確認済み。次は top-level 側を mruby に切�
 
 ### Phase 6 (将来): picoruby
 
-picoruby は mruby/c ベースで Class 定義に制約があるため、`Kotoyomi::JS::Value < BasicObject` がそのまま通るかは要確認。Phase 2 の mruby ブリッジが安定してから別タスクで検討
+picoruby は mruby/c ベースで Class 定義に制約があるため、`JSBridge::Value < BasicObject` がそのまま通るかは要確認。Phase 2 の mruby ブリッジが安定してから別タスクで検討
 
 ## 7. 再現手順
 
@@ -280,8 +280,8 @@ node host/run-kotoyomi-node.mjs  # kotoyomi 起動シナリオ (poem.children: 2
 
 | ファイル | 役割 |
 |---|---|
-| `spike/mrbgem/kotoyomi-js/src/kotoyomi_js.c` | C primitive + `kotoyomi_eval_handle` export (約 350 行) |
-| `spike/mrbgem/kotoyomi-js/mrblib/kotoyomi_js.rb` | Ruby ラッパー、BasicObject ベース (143 行) |
+| `spike/mrbgem/mruby-js-bridge/src/js_bridge.c` | C primitive + `js_bridge_eval_handle` export (約 350 行) |
+| `spike/mrbgem/mruby-js-bridge/mrblib/js_bridge.rb` | Ruby ラッパー、BasicObject ベース (143 行) |
 | `spike/main/main.c` | `mrb_open()` だけ (SCRIPT 埋込みは廃止、Phase 2d) |
 | `spike/host/adapter.js` | JS host adapter、handle table、imports、`evalRuby`、`debug.trace` (約 305 行) |
 | `spike/host/boot-kotoyomi.js` | kotoyomi sample 用の boot エントリ (`.rb` fetch + evalRuby) |

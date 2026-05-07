@@ -1,8 +1,8 @@
-// Phase 2a: minimal JS host adapter for mruby + kotoyomi-js mrbgem.
+// JS host adapter for the mruby-js-bridge mrbgem.
 //
 // Provides:
 //   - Handle table for JS values exposed to Ruby
-//   - Implementation of all kotoyomi.* imports the mrbgem declares
+//   - Implementation of all js_bridge.* imports the mrbgem declares
 //   - Boot helpers to instantiate the WASM, run an mruby program, and
 //     route stdout/stderr to console.log.
 
@@ -33,7 +33,7 @@ export function release(h) {
   free.push(h);
 }
 
-// --- WASM imports for kotoyomi-js -------------------------------------------
+// --- WASM imports for mruby-js-bridge -------------------------------------------
 // `instance` is set after WebAssembly.instantiate so the imports can read
 // the linear memory.
 let instance = null;
@@ -68,7 +68,7 @@ function readHandleArray(ptr, count) {
   return out;
 }
 
-const kotoyomiImports = {
+const jsBridgeImports = {
   // Evaluate JS source and return a handle to the resulting value.
   // NOTE: Phase 1+2a uses `Function` constructor for simplicity; not safe.
   js_eval(ptr, len) {
@@ -77,7 +77,7 @@ const kotoyomiImports = {
     try {
       result = new Function(`return (${src});`)();
     } catch (err) {
-      console.error("[kotoyomi-js] js_eval failed:", err, "src:", src);
+      console.error("[js-bridge] js_eval failed:", err, "src:", src);
       return 0;
     }
     return alloc(result);
@@ -100,7 +100,7 @@ const kotoyomiImports = {
     const key = readUtf8(keyPtr, keyLen);
     const obj = get(h);
     if (obj == null) {
-      console.error(`[kotoyomi-js] js_get on null handle ${h} key=${key}`);
+      console.error(`[js-bridge] js_get on null handle ${h} key=${key}`);
       return 0;
     }
     return alloc(obj[key]);
@@ -111,7 +111,7 @@ const kotoyomiImports = {
     const key = readUtf8(keyPtr, keyLen);
     const obj = get(h);
     if (obj == null) {
-      console.error(`[kotoyomi-js] js_set on null handle ${h} key=${key}`);
+      console.error(`[js-bridge] js_set on null handle ${h} key=${key}`);
       return;
     }
     obj[key] = get(valueHandle);
@@ -123,7 +123,7 @@ const kotoyomiImports = {
     const method = readUtf8(methodPtr, methodLen);
     const obj = get(h);
     if (obj == null) {
-      console.error(`[kotoyomi-js] js_call on null handle ${h} method=${method}`);
+      console.error(`[js-bridge] js_call on null handle ${h} method=${method}`);
       return 0;
     }
     const argHandles = readHandleArray(argsPtr, argCount);
@@ -132,7 +132,7 @@ const kotoyomiImports = {
     try {
       result = obj[method].apply(obj, args);
     } catch (err) {
-      console.error(`[kotoyomi-js] js_call ${method} threw:`, err);
+      console.error(`[js-bridge] js_call ${method} threw:`, err);
       return 0;
     }
     return alloc(result);
@@ -191,7 +191,7 @@ const kotoyomiImports = {
       if (debug.trace) console.log(`[trace] wrapper id=${callbackId} fired with`, args);
       const argsHandle = alloc(args);
       try {
-        instance.exports.kotoyomi_invoke_proc(callbackId, argsHandle);
+        instance.exports.js_bridge_invoke_proc(callbackId, argsHandle);
       } finally {
         release(argsHandle);
       }
@@ -283,7 +283,7 @@ export function evalRuby(source) {
   if (!instance) throw new Error("evalRuby called before boot()");
   const handle = alloc(source);
   try {
-    return instance.exports.kotoyomi_eval_handle(handle);
+    return instance.exports.js_bridge_eval_handle(handle);
   } finally {
     release(handle);
   }
@@ -297,7 +297,7 @@ export async function boot(wasmUrl) {
   }
   const result = await WebAssembly.instantiateStreaming(response, {
     env: envImports,
-    kotoyomi: kotoyomiImports,
+    js_bridge: jsBridgeImports,
     wasi_snapshot_preview1: wasiImports,
   });
   instance = result.instance;

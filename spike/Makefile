@@ -70,8 +70,8 @@ $(HOST_WASM): $(MAIN_C) $(LIBMRUBY) | $(HOST_DIR)
 	  -I$(MRUBY_DIR)/include \
 	  -I$(MRUBY_DIR)/build/wasi/include \
 	  -Wl,--allow-undefined \
-	  -Wl,--export=kotoyomi_invoke_proc \
-	  -Wl,--export=kotoyomi_eval_handle \
+	  -Wl,--export=js_bridge_invoke_proc \
+	  -Wl,--export=js_bridge_eval_handle \
 	  -o $(HOST_WASM) \
 	  $(MAIN_C) $(LIBMRUBY) \
 	  -lsetjmp

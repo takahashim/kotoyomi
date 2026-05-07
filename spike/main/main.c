@@ -2,7 +2,7 @@
  * Phase 2d entry point.
  *
  * Open mruby in `_start` and leave it alive; the JS side drives Ruby
- * source loading via the `kotoyomi_eval_handle` export. Lets us load
+ * source loading via the `js_bridge_eval_handle` export. Lets us load
  * a kotoyomi app's lib .rb files at boot time instead of hardcoding SCRIPT.
  */
 

@@ -182,14 +182,14 @@ end
 ## 9. mrbgem の構成
 
 ```
-mrbgems/kotoyomi-js/
+mrbgems/mruby-js-bridge/
   mrbgem.rake             # gem 定義
-  src/kotoyomi_js.c       # C 実装 (handle bridge)
-  mrblib/kotoyomi_js.rb   # Ruby ラッパー (Kotoyomi::JS module)
+  src/js_bridge.c       # C 実装 (handle bridge)
+  mrblib/js_bridge.rb   # Ruby ラッパー (JSBridge module)
   test/                   # テスト (mruby test)
 ```
 
-Phase 1 の spike では `src/kotoyomi_js.c` で `js_eval` 1 つだけ実装、`mrblib/` で `Kotoyomi::JS.eval(str)` を提供。
+Phase 1 の spike では `src/js_bridge.c` で `js_eval` 1 つだけ実装、`mrblib/` で `JSBridge.eval(str)` を提供。
 
 ## 10. 想定 API (Phase 2 の確定前にスケッチ)
 
@@ -252,7 +252,7 @@ picoruby の方が小さい (mruby/c VM ベース) が、**Ruby 言語仕様の�
 - **ランタイム**: mruby (full、not mruby/c)
 - **ビルド**: wasi-sdk + clang `--target=wasm32-wasip1`、必要なら Asyncify
 - **JS bridge**: 自前で mrbgem を C 実装。`mruby-js` も使わない
-- **アプリコード**: 既存 `lib/*.rb` の API を維持しつつ、`Kotoyomi::JS` の内部実装を ruby.wasm `js` gem 経由から自前 bridge 経由に切り替え
+- **アプリコード**: 既存 `lib/*.rb` の API を維持しつつ、`JSBridge` の内部実装を ruby.wasm `js` gem 経由から自前 bridge 経由に切り替え
 
 参考実装として参照するもの:
 
@@ -306,7 +306,7 @@ picoruby の方が小さい (mruby/c VM ベース) が、**Ruby 言語仕様の�
 ### Phase 2 着手前にやり残し
 
 - ハンドルテーブル: alloc は実装、release はまだ — 連続実行でリーク
-- `Kotoyomi::JS.eval` の戻り値がただの整数 handle、Ruby らしいオブジェクトでない (Phase 2 で `JS::Value` ラップ)
+- `JSBridge.eval` の戻り値がただの整数 handle、Ruby らしいオブジェクトでない (Phase 2 で `JS::Value` ラップ)
 - `js_get` `js_set` `js_call` 等の追加 API 未実装 (Phase 2)
 
 ## 14. 進め方 (Phase 1 spike の具体手順)
@@ -340,16 +340,16 @@ brew install wasi-sdk    # or 公式リリース https://github.com/WebAssembly/
 4. 生成された `bin/mruby.wasm` (or `lib/libmruby.a`) を確認
 5. **GC の setjmp/longjmp 周りで Asyncify が必要かを実機ロードで判断**。必要なら `wasm-opt --asyncify` を後段に挟む
 
-### 14.5 最小 mrbgem (kotoyomi-js) 作成
+### 14.5 最小 mrbgem (mruby-js-bridge) 作成
 
 ```
-mrbgems/kotoyomi-js/
+mrbgems/mruby-js-bridge/
   mrbgem.rake             # gem 定義
-  src/kotoyomi_js.c       # js_eval 1 関数のみ
-  mrblib/kotoyomi_js.rb   # Kotoyomi::JS.eval(src) ラッパー
+  src/js_bridge.c       # js_eval 1 関数のみ
+  mrblib/js_bridge.rb   # JSBridge.eval(src) ラッパー
 ```
 
-`src/kotoyomi_js.c` の最小実装:
+`src/js_bridge.c` の最小実装:
 
 ```c
 extern int js_eval(const char *ptr, int len);  // WASM import
@@ -363,14 +363,13 @@ mrb_js_eval(mrb_state *mrb, mrb_value self) {
   return mrb_fixnum_value(handle);
 }
 
-void mrb_kotoyomi_js_gem_init(mrb_state *mrb) {
-  struct RClass *m = mrb_define_module(mrb, "Kotoyomi");
-  struct RClass *js = mrb_define_module_under(mrb, m, "JS");
+void mrb_mruby_js_bridge_gem_init(mrb_state *mrb) {
+  struct RClass *js = mrb_define_module(mrb, "JSBridge");
   mrb_define_module_function(mrb, js, "eval", mrb_js_eval, MRB_ARGS_REQ(1));
 }
 ```
 
-build_config に `conf.gem 'mrbgems/kotoyomi-js'` を追記。
+build_config に `conf.gem 'mrbgems/mruby-js-bridge'` を追記。
 
 ### 14.6 JS 側アダプタ
 
@@ -409,7 +408,7 @@ const wasm = await WebAssembly.instantiateStreaming(fetch("mruby.wasm"), imports
 
 1. `mruby.wasm` がブラウザで instantiate
 2. `mrb_load_string("puts 'hello'")` が動く (puts は console.log にリダイレクト要)
-3. mruby 内 `Kotoyomi::JS.eval("document.title = 'spike'")` でブラウザタブ名が変わる
+3. mruby 内 `JSBridge.eval("document.title = 'spike'")` でブラウザタブ名が変わる
 
 ここまで来たら **feasibility 確認完了**、Phase 2 へ。
 

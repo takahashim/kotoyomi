@@ -12,7 +12,7 @@
 
 1. mruby を wasi-sdk でビルドした WASM がブラウザで instantiate できる
 2. ブラウザコンソールに mruby の `puts` 出力が出る
-3. Ruby から自前関数 `Kotoyomi::JS.eval(src)` 経由で JS が実行され、ブラウザタブのタイトルが変わる
+3. Ruby から自前関数 `JSBridge.eval(src)` 経由で JS が実行され、ブラウザタブのタイトルが変わる
 
 3 つ全て達成。
 
@@ -178,7 +178,7 @@ make serve      # http://localhost:8001/ で開いてコンソール確認
 - `spike/Makefile` — ビルドオーケストレーション
 - `spike/main/main.c` — `mrb_load_string` で test script を eval する自前 main
 - `spike/build_config/wasi.rb` — mruby を wasi-sdk + clang でビルドする設定 (mruby clone の外に置いて `spike/mruby/` を gitignore できるように)
-- `spike/mrbgem/kotoyomi-js/src/kotoyomi_js.c` — `Kotoyomi::JS.eval` の C 実装 (12 行)
+- `spike/mrbgem/mruby-js-bridge/src/js_bridge.c` — `JSBridge.eval` の C 実装 (12 行)
 - `spike/host/adapter.js` — JS 側ホスト (handle table, js_eval, WASI shim, no-op stubs)
 - `spike/host/index.html` — ブラウザエントリ
 - `spike/stubs/` — POSIX ヘッダの最小スタブ群
