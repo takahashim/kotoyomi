@@ -216,13 +216,19 @@ end
 - **コールバックテーブル** は Ruby Hash でそのまま実現できた。`mrb_gc_register` で pin するだけで十分 (個別の WeakRef 等は不要)
 - **`mrb_yield_argv`** で Proc に引数配列を渡せるので、可変長 callback の取り回しは楽
 
-## 6. 残課題 (Phase 2e 以降)
+## 6. ruby.wasm の `js` gem に追いついた機能 (Phase 2d 後)
 
-### 機能面
+ruby.wasm 互換性をさらに引き上げるため、以下を追加実装:
 
-- **エラー伝搬** — JS 例外が `js_call` 経由で投げられたとき、現状は `console.error` してから handle 0 を返すだけ。`JSBridge::Error < StandardError` を立てて Ruby 側に伝搬させたい (`wait_for_track_load` の `rescue JS::Error` は今は到達不可)
-- **`Value#==`** — 現状は method_missing 経由で JS の `==` にフォワードされる。Ruby らしくは `Value#==` を「同じ JS 値を指すか」で実装するのが妥当
-- **`inspect`** — BasicObject なので `p value` が動かない。デバッグ用に最小実装が欲しい
+- **`Value#new(*args)`** — JS constructor 呼び出し (`new Date(...)`, `new Map`, etc.)。WASM import `js_new` + Ruby `JSBridge._new`
+- **`JSBridge::Error < StandardError`** — JS 例外伝搬。adapter 側で `pendingError` に retain、`js_take_error` で取り出して `mrb_raise(JSBridge::Error)`。`js_eval` / `js_get` / `js_set` / `js_call` / `js_new` 全部で wired
+- **Symbol / Array / Hash の `wrap`** — `obj[:opts] = { once: true, items: [1, 2] }` のような自然な記述が可能。Hash は `JSBridge.object`、Array は `JSBridge.array` で再帰 wrap
+- **`Value#==`** (`eql?` `equal?` も alias) — JS `===` を呼んで Ruby boolean を返す。method_missing 経由を経由しない
+- **`Value#typeof`** — JS `typeof` の返り値を Ruby String で
+- **`Value#instanceof?(ctor)`** — JS `instance instanceof ctor`
+- **`Value#inspect`** — JSON.stringify ベースのデバッグ表現 (`p value` が動く)
+
+## 7. 残課題 (Phase 2e 以降)
 
 ### 性能・配布
 
@@ -242,7 +248,7 @@ spike 上で動くことは確認済み。次は top-level 側を mruby に切�
 
 picoruby は mruby/c ベースで Class 定義に制約があるため、`JSBridge::Value < BasicObject` がそのまま通るかは要確認。Phase 2 の mruby ブリッジが安定してから別タスクで検討
 
-## 7. 再現手順
+## 8. 再現手順
 
 ```bash
 git switch spike/mruby-bridge
@@ -276,7 +282,7 @@ node host/run-kotoyomi-node.mjs  # kotoyomi 起動シナリオ (poem.children: 2
 
 (`debug.trace = true` を設定すると adapter.js の `[trace]` 系も出る。既定では off)
 
-## 8. 関連ファイル
+## 9. 関連ファイル
 
 | ファイル | 役割 |
 |---|---|
@@ -295,7 +301,7 @@ node host/run-kotoyomi-node.mjs  # kotoyomi 起動シナリオ (poem.children: 2
 | `docs/phase1-spike-summary.md` | Phase 1 (eval だけ) のサマリ |
 | `docs/mruby-bridge.md` | Phase 0 設計 + 全 Phase ロードマップ |
 
-## 9. 評価
+## 10. 評価
 
 Phase 1 は「絵に描いた eval が一回動く」段階だったが、Phase 2a–2c で **kotoyomi の lib コードがほぼそのまま載る形** までブリッジが育ち、Phase 2d で **実際にそのまま載った**。`BasicObject` 化と `method_missing` 委譲で `obj.method(arg)`/`obj.attr = v` の Ruby らしい記述が保て、ruby.wasm からの移植は `require "js"` の削除と `wait_for_track_load` の callback 化だけで済んだ。
 

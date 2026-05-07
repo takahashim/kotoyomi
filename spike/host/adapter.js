@@ -45,6 +45,15 @@ const encoder = new TextEncoder();
 // during the Phase 2c spike). Off by default — production noise.
 export const debug = { trace: false };
 
+// Latest JS exception caught by a primitive. The C side calls
+// js_take_error() right after each potentially-throwing op; if a handle
+// is returned, mruby raises JSBridge::Error with the message string.
+let pendingError = null;
+
+function captureError(err) {
+  pendingError = err;
+}
+
 function readUtf8(ptr, len) {
   const memory = instance.exports.memory;
   const bytes = new Uint8Array(memory.buffer, ptr, len);
@@ -60,6 +69,28 @@ function writeUtf8(s, ptr, maxLen) {
   return n;
 }
 
+// Best-effort debug string for a JS value. JSON for plain objects so
+// `p value` shows structure; tag DOM nodes / functions specially since
+// JSON.stringify drops them.
+function inspectValue(v) {
+  if (v === null) return "null";
+  if (v === undefined) return "undefined";
+  const t = typeof v;
+  if (t === "string") return JSON.stringify(v);
+  if (t === "number" || t === "boolean") return String(v);
+  if (t === "function") return `#<JS function ${v.name || "(anonymous)"}>`;
+  if (t === "symbol") return v.toString();
+  // DOM-ish detection without referencing window.
+  if (v && typeof v.nodeType === "number" && typeof v.nodeName === "string") {
+    return `#<JS ${v.nodeName.toLowerCase()}${v.id ? ` id=${JSON.stringify(v.id)}` : ""}>`;
+  }
+  try {
+    return JSON.stringify(v);
+  } catch (_err) {
+    return `#<JS ${Object.prototype.toString.call(v)}>`;
+  }
+}
+
 function readHandleArray(ptr, count) {
   if (count <= 0) return [];
   const view = new DataView(instance.exports.memory.buffer);
@@ -70,14 +101,14 @@ function readHandleArray(ptr, count) {
 
 const jsBridgeImports = {
   // Evaluate JS source and return a handle to the resulting value.
-  // NOTE: Phase 1+2a uses `Function` constructor for simplicity; not safe.
+  // NOTE: uses `Function` constructor for simplicity; not a sandbox.
   js_eval(ptr, len) {
     const src = readUtf8(ptr, len);
     let result;
     try {
       result = new Function(`return (${src});`)();
     } catch (err) {
-      console.error("[js-bridge] js_eval failed:", err, "src:", src);
+      captureError(err);
       return 0;
     }
     return alloc(result);
@@ -100,10 +131,15 @@ const jsBridgeImports = {
     const key = readUtf8(keyPtr, keyLen);
     const obj = get(h);
     if (obj == null) {
-      console.error(`[js-bridge] js_get on null handle ${h} key=${key}`);
+      captureError(new TypeError(`cannot read property '${key}' of ${obj}`));
       return 0;
     }
-    return alloc(obj[key]);
+    try {
+      return alloc(obj[key]);
+    } catch (err) {
+      captureError(err);
+      return 0;
+    }
   },
 
   // Set a property: handle[key] = valueHandle's value
@@ -111,10 +147,14 @@ const jsBridgeImports = {
     const key = readUtf8(keyPtr, keyLen);
     const obj = get(h);
     if (obj == null) {
-      console.error(`[js-bridge] js_set on null handle ${h} key=${key}`);
+      captureError(new TypeError(`cannot set property '${key}' of ${obj}`));
       return;
     }
-    obj[key] = get(valueHandle);
+    try {
+      obj[key] = get(valueHandle);
+    } catch (err) {
+      captureError(err);
+    }
   },
 
   // Call a method: handle.method(...args) → handle
@@ -123,19 +163,45 @@ const jsBridgeImports = {
     const method = readUtf8(methodPtr, methodLen);
     const obj = get(h);
     if (obj == null) {
-      console.error(`[js-bridge] js_call on null handle ${h} method=${method}`);
+      captureError(new TypeError(`cannot call '${method}' on ${obj}`));
       return 0;
     }
     const argHandles = readHandleArray(argsPtr, argCount);
     const args = argHandles.map(get);
-    let result;
     try {
-      result = obj[method].apply(obj, args);
+      return alloc(obj[method].apply(obj, args));
     } catch (err) {
-      console.error(`[js-bridge] js_call ${method} threw:`, err);
+      captureError(err);
       return 0;
     }
-    return alloc(result);
+  },
+
+  // Construct a new instance: new handle(...args). Returns handle to the
+  // resulting object. Used for `Date.new(...)`, `Map.new`, etc.
+  js_new(h, argsPtr, argCount) {
+    const ctor = get(h);
+    if (typeof ctor !== "function") {
+      captureError(new TypeError(`handle ${h} is not a constructor`));
+      return 0;
+    }
+    const argHandles = readHandleArray(argsPtr, argCount);
+    const args = argHandles.map(get);
+    try {
+      return alloc(new ctor(...args));
+    } catch (err) {
+      captureError(err);
+      return 0;
+    }
+  },
+
+  // Take and clear the most recent JS error. Returns 0 if no error
+  // pending; otherwise returns a handle to a string with the error
+  // message (consumed — second call returns 0 unless a new error fires).
+  js_take_error() {
+    if (pendingError == null) return 0;
+    const err = pendingError;
+    pendingError = null;
+    return alloc(String(err && err.message ? err.message : err));
   },
 
   // Get UTF-8 byte length of stringification (so caller can allocate buffer).
@@ -182,6 +248,40 @@ const jsBridgeImports = {
   // Used by Value#nil? on the Ruby side.
   js_is_null(h) {
     return (h === 0 || handles[h] == null) ? 1 : 0;
+  },
+
+  // JS strict equality (===). Used by Value#==.
+  js_strict_equal(a, b) {
+    return get(a) === get(b) ? 1 : 0;
+  },
+
+  // JS typeof — returns string ("number", "string", "object", etc.).
+  // Pair of len/copy lets the C side allocate the right-size buffer.
+  js_typeof_len(h) {
+    return encoder.encode(typeof get(h)).length;
+  },
+  js_typeof_copy(h, ptr, bufLen) {
+    writeUtf8(typeof get(h), ptr, bufLen);
+  },
+
+  // Debug-friendly stringification. JSON for plain objects/arrays,
+  // String() otherwise. Used by Value#inspect.
+  js_inspect_len(h) {
+    return encoder.encode(inspectValue(get(h))).length;
+  },
+  js_inspect_copy(h, ptr, bufLen) {
+    writeUtf8(inspectValue(get(h)), ptr, bufLen);
+  },
+
+  // JS instanceof — `instance instanceof ctor`. Used by Value#instanceof?.
+  js_instanceof(instanceH, ctorH) {
+    const ctor = get(ctorH);
+    if (typeof ctor !== "function") return 0;
+    try {
+      return get(instanceH) instanceof ctor ? 1 : 0;
+    } catch (_err) {
+      return 0;
+    }
   },
 
   // Create a JS function that, when called, dispatches into mruby with

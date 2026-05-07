@@ -36,27 +36,40 @@ module JSBridge
     # Defined as a module function (not on Value) so constant lookup for
     # Integer/String/ArgumentError works — Value < BasicObject can't see
     # those constants without `::` prefixing.
+    #
+    # Symbol/Array/Hash are wrapped recursively so callers can write
+    # `obj[:opts] = { once: true, capture: false }` naturally.
     def wrap(v)
       case v
       when Value then v
       when Integer then Value.new(_from_int(v))
       when Float then Value.new(_from_float(v))
       when String then Value.new(_from_string(v))
+      when Symbol then Value.new(_from_string(v.to_s))
       when nil then Value.new(_eval("null"))
       when true then Value.new(_eval("true"))
       when false then Value.new(_eval("false"))
+      when Array then array(v)
+      when Hash then object(v)
       else
         raise ArgumentError, "cannot wrap #{v.class} as JS value"
       end
     end
 
-    # Build a JS object literal from a Ruby Hash.
-    # Useful for `addEventListener`'s options arg, etc.:
+    # Build a JS object literal from a Ruby Hash. Recursively wraps values.
     #   JSBridge.object(once: true)  →  { once: true }
     def object(hash = {})
       obj = eval("({})")
-      hash.each { |k, v| obj[k] = v }
+      hash.each { |k, v| obj[k.to_s] = v }
       obj
+    end
+
+    # Build a JS array from a Ruby Array. Recursively wraps elements.
+    #   JSBridge.array([1, "two", true])  →  [1, "two", true]
+    def array(items = [])
+      arr = eval("[]")
+      items.each { |item| arr.push(item) }
+      arr
     end
   end
 
@@ -92,6 +105,17 @@ module JSBridge
       result
     end
 
+    # Call as a JS constructor: `Foo.new(args)` → `new Foo(args)`.
+    # Same arg-rooting pattern as #call to keep wrapped Values alive
+    # across the WASM boundary.
+    def new(*args)
+      wrapped = args.map { |a| JSBridge.wrap(a) }
+      arg_handles = wrapped.map(&:handle)
+      result = Value.new(JSBridge._new(handle, arg_handles))
+      wrapped = nil
+      result
+    end
+
     def to_s
       JSBridge._to_string(handle)
     end
@@ -108,6 +132,34 @@ module JSBridge
     # one that reflects the wrapped JS value (== null in JS lands here).
     def nil?
       JSBridge._is_null(handle)
+    end
+
+    # JS-side strict equality (===) returning a Ruby boolean.
+    # Without this, method_missing would dispatch `==` to JS as a method
+    # call (which would either explode or return a JS boolean Value, not
+    # a Ruby true/false). Compares wrapped JS values, not handles.
+    def ==(other)
+      o = JSBridge.wrap(other)
+      JSBridge._strict_equal(handle, o.handle)
+    end
+    alias_method :eql?, :==
+    alias_method :equal?, :==
+
+    # JS `typeof` — "object", "string", "function", etc.
+    def typeof
+      JSBridge._typeof(handle)
+    end
+
+    # JS `instance instanceof ctor`. Argument should be a Value wrapping
+    # a constructor function. Returns Ruby boolean.
+    def instanceof?(ctor)
+      JSBridge._instanceof(handle, JSBridge.wrap(ctor).handle)
+    end
+
+    # Debug-friendly representation for `p value`. JSON for plain
+    # objects/arrays, String() otherwise.
+    def inspect
+      "#<JSBridge::Value #{JSBridge._inspect(handle)}>"
     end
 
     # Subscribe a Ruby block to a JS event (ergonomic alias).

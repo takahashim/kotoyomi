@@ -36,6 +36,7 @@ IMPORT(js_get) int js_get(int handle, const char *key, int key_len);
 IMPORT(js_set) void js_set(int handle, const char *key, int key_len, int value_handle);
 IMPORT(js_call) int js_call(int handle, const char *method, int method_len,
                             const int *args, int arg_count);
+IMPORT(js_new) int js_new(int handle, const int *args, int arg_count);
 IMPORT(js_to_string_len) int js_to_string_len(int handle);
 IMPORT(js_to_string_copy) void js_to_string_copy(int handle, char *buf, int buf_len);
 IMPORT(js_from_string) int js_from_string(const char *s, int len);
@@ -44,7 +45,17 @@ IMPORT(js_from_int) int js_from_int(int value);
 IMPORT(js_to_float) double js_to_float(int handle);
 IMPORT(js_from_float) int js_from_float(double value);
 IMPORT(js_is_null) int js_is_null(int handle);
+IMPORT(js_strict_equal) int js_strict_equal(int a, int b);
+IMPORT(js_typeof_len) int js_typeof_len(int handle);
+IMPORT(js_typeof_copy) void js_typeof_copy(int handle, char *buf, int buf_len);
+IMPORT(js_inspect_len) int js_inspect_len(int handle);
+IMPORT(js_inspect_copy) void js_inspect_copy(int handle, char *buf, int buf_len);
+IMPORT(js_instanceof) int js_instanceof(int instance, int constructor);
 IMPORT(js_make_callback) int js_make_callback(int callback_id);
+
+/* Last JS exception caught by adapter. 0 means no error pending; otherwise
+ * a handle to a string with the JS error's `.message` (or stringification). */
+IMPORT(js_take_error) int js_take_error(void);
 
 #undef IMPORT
 
@@ -53,7 +64,29 @@ IMPORT(js_make_callback) int js_make_callback(int callback_id);
 static mrb_state *g_mrb = NULL;
 static mrb_value g_callback_table; /* Ruby Hash, lazily created */
 static mrb_value g_value_class_obj; /* cached JSBridge::Value */
+static mrb_value g_error_class_obj; /* cached JSBridge::Error */
 static int g_next_callback_id = 1;
+
+/* If the JS adapter has stashed an error from the most recent js_call /
+ * js_new / js_eval, raise JSBridge::Error with its message. Called at
+ * the end of each primitive that can dispatch to JS. */
+static void
+raise_if_js_error(mrb_state *mrb) {
+  int err_h = js_take_error();
+  if (err_h == 0) return;
+  int len = js_to_string_len(err_h);
+  mrb_value msg;
+  if (len <= 0) {
+    msg = mrb_str_new_lit(mrb, "JS error");
+  } else {
+    char *buf = (char *)mrb_malloc(mrb, (size_t)len);
+    js_to_string_copy(err_h, buf, len);
+    msg = mrb_str_new(mrb, buf, len);
+    mrb_free(mrb, buf);
+  }
+  js_release(err_h);
+  mrb_raise(mrb, mrb_class_ptr(g_error_class_obj), mrb_string_value_cstr(mrb, &msg));
+}
 
 /* ---------- JSBridge::Value (data type) ---------- */
 
@@ -107,7 +140,9 @@ mrb_js_eval(mrb_state *mrb, mrb_value self) {
   const char *src;
   mrb_int len;
   mrb_get_args(mrb, "s", &src, &len);
-  return mrb_fixnum_value(js_eval(src, (int)len));
+  int handle = js_eval(src, (int)len);
+  raise_if_js_error(mrb);
+  return mrb_fixnum_value(handle);
 }
 
 static mrb_value
@@ -129,7 +164,9 @@ mrb_js_get(mrb_state *mrb, mrb_value self) {
   const char *key;
   mrb_int key_len;
   mrb_get_args(mrb, "is", &handle, &key, &key_len);
-  return mrb_fixnum_value(js_get((int)handle, key, (int)key_len));
+  int result = js_get((int)handle, key, (int)key_len);
+  raise_if_js_error(mrb);
+  return mrb_fixnum_value(result);
 }
 
 static mrb_value
@@ -140,6 +177,7 @@ mrb_js_set(mrb_state *mrb, mrb_value self) {
   mrb_int value_handle;
   mrb_get_args(mrb, "isi", &handle, &key, &key_len, &value_handle);
   js_set((int)handle, key, (int)key_len, (int)value_handle);
+  raise_if_js_error(mrb);
   return mrb_nil_value();
 }
 
@@ -161,6 +199,27 @@ mrb_js_call(mrb_state *mrb, mrb_value self) {
   }
   int result = js_call((int)handle, method, (int)method_len, args, (int)n);
   if (args) mrb_free(mrb, args);
+  raise_if_js_error(mrb);
+  return mrb_fixnum_value(result);
+}
+
+static mrb_value
+mrb_js_new(mrb_state *mrb, mrb_value self) {
+  mrb_int handle;
+  mrb_value args_ary;
+  mrb_get_args(mrb, "iA", &handle, &args_ary);
+
+  mrb_int n = RARRAY_LEN(args_ary);
+  int *args = NULL;
+  if (n > 0) {
+    args = (int *)mrb_malloc(mrb, sizeof(int) * (size_t)n);
+    for (mrb_int i = 0; i < n; i++) {
+      args[i] = (int)mrb_integer(mrb_ary_ref(mrb, args_ary, i));
+    }
+  }
+  int result = js_new((int)handle, args, (int)n);
+  if (args) mrb_free(mrb, args);
+  raise_if_js_error(mrb);
   return mrb_fixnum_value(result);
 }
 
@@ -218,6 +277,46 @@ mrb_js_is_null(mrb_state *mrb, mrb_value self) {
   mrb_int handle;
   mrb_get_args(mrb, "i", &handle);
   return mrb_bool_value(js_is_null((int)handle) != 0);
+}
+
+static mrb_value
+mrb_js_strict_equal(mrb_state *mrb, mrb_value self) {
+  mrb_int a, b;
+  mrb_get_args(mrb, "ii", &a, &b);
+  return mrb_bool_value(js_strict_equal((int)a, (int)b) != 0);
+}
+
+static mrb_value
+mrb_js_typeof(mrb_state *mrb, mrb_value self) {
+  mrb_int handle;
+  mrb_get_args(mrb, "i", &handle);
+  int len = js_typeof_len((int)handle);
+  if (len <= 0) return mrb_str_new_lit(mrb, "");
+  char *buf = (char *)mrb_malloc(mrb, (size_t)len);
+  js_typeof_copy((int)handle, buf, len);
+  mrb_value result = mrb_str_new(mrb, buf, len);
+  mrb_free(mrb, buf);
+  return result;
+}
+
+static mrb_value
+mrb_js_inspect(mrb_state *mrb, mrb_value self) {
+  mrb_int handle;
+  mrb_get_args(mrb, "i", &handle);
+  int len = js_inspect_len((int)handle);
+  if (len <= 0) return mrb_str_new_lit(mrb, "");
+  char *buf = (char *)mrb_malloc(mrb, (size_t)len);
+  js_inspect_copy((int)handle, buf, len);
+  mrb_value result = mrb_str_new(mrb, buf, len);
+  mrb_free(mrb, buf);
+  return result;
+}
+
+static mrb_value
+mrb_js_instanceof(mrb_state *mrb, mrb_value self) {
+  mrb_int instance, ctor;
+  mrb_get_args(mrb, "ii", &instance, &ctor);
+  return mrb_bool_value(js_instanceof((int)instance, (int)ctor) != 0);
 }
 
 /* ---------- Callback registration & dispatch ---------- */
@@ -337,6 +436,12 @@ mrb_mruby_js_bridge_gem_init(mrb_state *mrb) {
 
   struct RClass *js = mrb_define_module(mrb, "JSBridge");
 
+  /* JSBridge::Error < StandardError — raised when a JS call throws. */
+  struct RClass *err_cls = mrb_define_class_under(
+    mrb, js, "Error", mrb_class_get(mrb, "StandardError"));
+  g_error_class_obj = mrb_obj_value(err_cls);
+  mrb_gc_register(mrb, g_error_class_obj);
+
   /* Value class — BasicObject subclass so method_missing forwards almost
      everything to JS without colliding with Object's methods (then, tap,
      itself, ==, inspect, ...). Matches ruby.wasm's JS::Object design. */
@@ -355,6 +460,7 @@ mrb_mruby_js_bridge_gem_init(mrb_state *mrb) {
   mrb_define_module_function(mrb, js, "_get", mrb_js_get, MRB_ARGS_REQ(2));
   mrb_define_module_function(mrb, js, "_set", mrb_js_set, MRB_ARGS_REQ(3));
   mrb_define_module_function(mrb, js, "_call", mrb_js_call, MRB_ARGS_REQ(3));
+  mrb_define_module_function(mrb, js, "_new", mrb_js_new, MRB_ARGS_REQ(2));
   mrb_define_module_function(mrb, js, "_to_string", mrb_js_to_string, MRB_ARGS_REQ(1));
   mrb_define_module_function(mrb, js, "_from_string", mrb_js_from_string, MRB_ARGS_REQ(1));
   mrb_define_module_function(mrb, js, "_to_int", mrb_js_to_int, MRB_ARGS_REQ(1));
@@ -362,6 +468,10 @@ mrb_mruby_js_bridge_gem_init(mrb_state *mrb) {
   mrb_define_module_function(mrb, js, "_to_float", mrb_js_to_float, MRB_ARGS_REQ(1));
   mrb_define_module_function(mrb, js, "_from_float", mrb_js_from_float, MRB_ARGS_REQ(1));
   mrb_define_module_function(mrb, js, "_is_null", mrb_js_is_null, MRB_ARGS_REQ(1));
+  mrb_define_module_function(mrb, js, "_strict_equal", mrb_js_strict_equal, MRB_ARGS_REQ(2));
+  mrb_define_module_function(mrb, js, "_typeof", mrb_js_typeof, MRB_ARGS_REQ(1));
+  mrb_define_module_function(mrb, js, "_inspect", mrb_js_inspect, MRB_ARGS_REQ(1));
+  mrb_define_module_function(mrb, js, "_instanceof", mrb_js_instanceof, MRB_ARGS_REQ(2));
   mrb_define_module_function(mrb, js, "_make_callback", mrb_js_make_callback, MRB_ARGS_REQ(1));
 }
 
