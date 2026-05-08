@@ -26,9 +26,10 @@ const encoder = new TextEncoder();
 // imports — names track the wasi-libc / WASI spec.
 //
 // path_open oflags
-const O_CREAT = 1;
-const O_EXCL  = 4;
-const O_TRUNC = 8;
+const O_CREAT     = 1;
+const O_DIRECTORY = 2;
+const O_EXCL      = 4;
+const O_TRUNC     = 8;
 // path_open / fd_fdstat fdflags
 const FD_APPEND = 1;
 // fd_seek whence
@@ -100,8 +101,18 @@ export class Directory {
 
 const root = new Directory();
 
+// Normalise an absolute path to an array of segments. Empty + "."
+// segments are dropped, ".." pops the previous segment. Lets wasi-libc
+// pass paths like "." (preopen-relative for "/") or "data/.." through
+// the tree walker correctly.
 function pathSegments(absPath) {
-  return absPath.split("/").filter((s) => s.length > 0);
+  const out = [];
+  for (const seg of absPath.split("/")) {
+    if (seg === "" || seg === ".") continue;
+    if (seg === "..") out.pop();
+    else out.push(seg);
+  }
+  return out;
 }
 
 // Walk an absolute path. Returns one of:
@@ -127,6 +138,23 @@ function lookupFull(absPath) {
 function lookupNode(absPath) {
   const r = lookupFull(absPath);
   return r ? r.node : null;
+}
+
+// Walk `relPath` from `baseDir`, returning the resolved File | Directory
+// node or null on miss. "." segments are skipped; ".." is treated as
+// "stay put" because we don't track parent pointers (good enough for
+// readdir's fstatat lookups, which only ever ask about "." and direct
+// child names).
+function resolveRelative(baseDir, relPath) {
+  const segs = relPath.split("/").filter((s) => s.length > 0 && s !== ".");
+  let node = baseDir;
+  for (const seg of segs) {
+    if (seg === "..") continue;
+    if (!(node instanceof Directory)) return null;
+    node = node.entries[seg] ?? null;
+    if (!node) return null;
+  }
+  return node;
 }
 
 // Walk to (or create) the parent Directory of absPath. Auto-creates
@@ -234,7 +262,9 @@ export const fs = {
 const PREOPEN_FD = 3;
 const PREOPEN_PATH = "/";
 let nextFileFd = 4;
-const openFiles = new Map(); // fd → { path, pos, append }
+// fd → { type: 'file', path, pos, append } | { type: 'dir', node }
+// (file fds carry a path + cursor; dir fds carry a Directory node ref)
+const openFiles = new Map();
 
 // The wasm instance is bound by `bindInstance()` from adapter.js's boot()
 // so the WASI imports can read linear memory. Stays null if a caller
@@ -371,6 +401,7 @@ export const wasiImports = {
     const view = new DataView(instance.exports.memory.buffer);
     const memory = new Uint8Array(instance.exports.memory.buffer);
     const f = openFiles.get(fd);
+    if (f && f.type === "dir") return E_ISDIR;
     const total = f
       ? writeToOpenFile(f, view, memory, iovsPtr, iovsLen)
       : writeToStdio(view, memory, iovsPtr, iovsLen);
@@ -383,7 +414,7 @@ export const wasiImports = {
   },
   fd_seek(fd, offset /* BigInt */, whence, newOffsetPtr) {
     const f = openFiles.get(fd);
-    if (!f) return E_BADF; // stdio not seekable here
+    if (!f || f.type !== "file") return E_BADF; // stdio / dirs not seekable here
     const data = fs.get(f.path);
     if (!data) return E_BADF;
     const off = Number(offset);
@@ -402,7 +433,7 @@ export const wasiImports = {
   },
   fd_tell(fd, ptr) {
     const f = openFiles.get(fd);
-    if (!f) return E_BADF;
+    if (!f || f.type !== "file") return E_BADF;
     const view = new DataView(instance.exports.memory.buffer);
     view.setBigUint64(ptr, BigInt(f.pos), true);
     return 0;
@@ -416,10 +447,14 @@ export const wasiImports = {
   fd_filestat_get(fd, ptr) {
     const view = new DataView(instance.exports.memory.buffer);
     const f = openFiles.get(fd);
-    if (f) {
+    if (f && f.type === "file") {
       const data = fs.get(f.path);
       if (!data) return E_BADF;
       writeFilestat(view, ptr, FILETYPE_REGULAR_FILE, data.length);
+      return 0;
+    }
+    if (f && f.type === "dir") {
+      writeFilestat(view, ptr, FILETYPE_DIRECTORY, 0);
       return 0;
     }
     if (fd === 0 || fd === 1 || fd === 2) {
@@ -453,7 +488,7 @@ export const wasiImports = {
       total = readFromStdin(view, memory, iovsPtr, iovsLen);
     } else {
       const f = openFiles.get(fd);
-      if (!f) {
+      if (!f || f.type !== "file") {
         if (debug.trace) console.log(`[wasi] fd_read EBADF fd=${fd}`);
         return E_BADF;
       }
@@ -471,13 +506,26 @@ export const wasiImports = {
     const relPath = readUtf8(pathPtr, pathLen);
     const fullPath = resolvePath(relPath);
 
+    const directory = !!(oflags & O_DIRECTORY);
     const create = !!(oflags & O_CREAT);
     const excl   = !!(oflags & O_EXCL);
     const trunc  = !!(oflags & O_TRUNC);
     const append = !!(fdflags & FD_APPEND);
 
     const node = lookupNode(fullPath);
-    if (node instanceof Directory) return E_ISDIR;  // O_DIRECTORY not yet supported
+
+    if (directory) {
+      if (!node) return E_NOENT;
+      if (!(node instanceof Directory)) return E_NOTDIR;
+      const fd = nextFileFd++;
+      openFiles.set(fd, { type: "dir", node });
+      const view = new DataView(instance.exports.memory.buffer);
+      view.setUint32(fdPtr, fd, true);
+      if (debug.trace) console.log(`[wasi] path_open OK (dir): ${fullPath} → fd=${fd}`);
+      return 0;
+    }
+
+    if (node instanceof Directory) return E_ISDIR;
     const exists = node instanceof File;
     if (excl && exists) return E_EXIST;
     if (!exists && !create) return E_NOENT;
@@ -487,16 +535,28 @@ export const wasiImports = {
 
     const data = fs.get(fullPath);
     const fd = nextFileFd++;
-    openFiles.set(fd, { path: fullPath, pos: append ? data.length : 0, append });
+    openFiles.set(fd, { type: "file", path: fullPath, pos: append ? data.length : 0, append });
     const view = new DataView(instance.exports.memory.buffer);
     view.setUint32(fdPtr, fd, true);
     if (debug.trace) console.log(`[wasi] path_open OK: ${fullPath} → fd=${fd} (append=${append}, trunc=${trunc}, create=${create})`);
     return 0;
   },
   path_filestat_get(dirfd, _flags, pathPtr, pathLen, ptr) {
-    if (dirfd !== PREOPEN_FD) return E_BADF;
+    // Accept either the preopen fd (paths absolute under "/") or an
+    // open directory fd from a previous path_open(O_DIRECTORY) — wasi-libc's
+    // readdir() calls fstatat(dirp->fd, name, ...) for each entry whose
+    // d_ino is reported as zero, so we have to honour this case for
+    // Dir.entries to surface anything to Ruby.
+    let baseDir;
+    if (dirfd === PREOPEN_FD) {
+      baseDir = root;
+    } else {
+      const f = openFiles.get(dirfd);
+      if (!f || f.type !== "dir") return E_BADF;
+      baseDir = f.node;
+    }
     const relPath = readUtf8(pathPtr, pathLen);
-    const node = lookupNode(resolvePath(relPath));
+    const node = resolveRelative(baseDir, relPath);
     if (!node) return E_NOENT;
     const view = new DataView(instance.exports.memory.buffer);
     if (node instanceof Directory) {
@@ -586,7 +646,7 @@ export const wasiImports = {
   // write-side filesystem ops ----------------------------------------------
   fd_filestat_set_size(fd, size /* i64 BigInt */) {
     const f = openFiles.get(fd);
-    if (!f) return E_BADF;
+    if (!f || f.type !== "file") return E_BADF;
     const data = fs.get(f.path);
     if (!data) return E_BADF;
     const newSize = Number(size);
@@ -602,7 +662,7 @@ export const wasiImports = {
   },
   fd_pwrite(fd, iovsPtr, iovsLen, offset /* i64 BigInt */, nwrittenPtr) {
     const f = openFiles.get(fd);
-    if (!f) return E_BADF;
+    if (!f || f.type !== "file") return E_BADF;
     const view = new DataView(instance.exports.memory.buffer);
     const memory = new Uint8Array(instance.exports.memory.buffer);
     // Treat pwrite like a non-append write at an explicit offset, but
@@ -654,7 +714,42 @@ export const wasiImports = {
   // unimplemented (not exercised in current scope) — return EINVAL-ish -----
   fd_filestat_set_times(_fd, _atim, _mtim, _flags) { return E_INVAL; },
   fd_pread(_fd, _iovs, _iovsLen, _offset, _nreadPtr) { return E_INVAL; },
-  fd_readdir(_fd, _buf, _bufLen, _cookie, _bufused) { return E_INVAL; },
+  fd_readdir(fd, bufPtr, bufLen, cookie /* BigInt */, bufusedPtr) {
+    if (debug.trace) console.log(`[wasi] fd_readdir fd=${fd} bufLen=${bufLen} cookie=${cookie}`);
+    const f = openFiles.get(fd);
+    if (!f || f.type !== "dir") return E_BADF;
+    const view = new DataView(instance.exports.memory.buffer);
+    const memory = new Uint8Array(instance.exports.memory.buffer);
+    // dirent layout (24 bytes header + name):
+    //   u64 d_next (next cookie)  | u64 d_ino  | u32 d_namlen | u8 d_type | 3 padding
+    // Synthesize "." / ".." at indices 0 / 1, real entries follow. CRuby
+    // Dir.entries includes "." / ".." and code in the wild often expects them.
+    const realNames = Object.keys(f.node.entries);
+    const all = [".", "..", ...realNames];
+    let bufPos = 0;
+    for (let i = Number(cookie); i < all.length; i++) {
+      const name = all[i];
+      const nameBytes = encoder.encode(name);
+      const recordSize = 24 + nameBytes.length;
+      if (bufPos + recordSize > bufLen) break;
+      // Zero the 24-byte header (covers padding too).
+      for (let j = 0; j < 24; j++) view.setUint8(bufPtr + bufPos + j, 0);
+      view.setBigUint64(bufPtr + bufPos, BigInt(i + 1), true);     // d_next
+      // Set d_ino non-zero so wasi-libc's readdir trusts our value
+      // and doesn't fall back to fstatat(dirfd, name) for the inode
+      // (we don't actually track inodes; the value just has to be
+      // non-zero per WASI convention).
+      view.setBigUint64(bufPtr + bufPos + 8, BigInt(i + 1), true);  // d_ino
+      view.setUint32(bufPtr + bufPos + 16, nameBytes.length, true); // d_namlen
+      const child = i < 2 ? f.node : f.node.entries[name];
+      view.setUint8(bufPtr + bufPos + 20,
+        child instanceof Directory ? FILETYPE_DIRECTORY : FILETYPE_REGULAR_FILE);
+      memory.set(nameBytes, bufPtr + bufPos + 24);
+      bufPos += recordSize;
+    }
+    view.setUint32(bufusedPtr, bufPos, true);
+    return 0;
+  },
   fd_renumber(_from, _to) { return E_INVAL; },
   fd_sync(_fd) { return 0; },
   fd_advise(_fd, _offset, _len, _advice) { return 0; },

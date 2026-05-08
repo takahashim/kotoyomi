@@ -17,7 +17,7 @@ mruby-js-bridge/
 └── wasm_spec/                # Self-contained tests (need a JS host to run)
     ├── spec_helper.rb        # Spec micro-framework
     ├── runner.mjs            # Node test runner
-    └── test_*.rb             # 11 test files, ~126 tests
+    └── test_*.rb             # 12 test files, ~144 tests
 ```
 
 The directory is `wasm_spec/` rather than `test/` to avoid mruby-test's
@@ -41,6 +41,11 @@ MRuby::CrossBuild.new("wasi") do |conf|
   conf.gem core: "mruby-time"     # optional (Time.now via WASI clock_time_get)
   conf.gem core: "mruby-random"   # optional (rand/Random via WASI random_get)
   conf.gem File.expand_path("path/to/mruby-js-bridge")
+  # Optional sibling gem — Dir.entries / Dir.mkdir / Dir.rmdir / Dir.exist?
+  # for Ruby code targeting the bundled wasi-preview1.js (or any WASI host
+  # that implements path_open(O_DIRECTORY) + fd_readdir + path_create_directory
+  # + path_remove_directory).
+  conf.gem File.expand_path("path/to/mruby-wasi-dir")
 end
 ```
 
@@ -169,7 +174,7 @@ MRUBY_JS_BRIDGE_WASM=/abs/path/to/your/mruby.wasm \
   node wasm_spec/runner.mjs
 ```
 
-Expected: `126/126 tests pass (187 assertions)`. Exit code 0 on success,
+Expected: `144/144 tests pass (209 assertions)`. Exit code 0 on success,
 1 on any failure.
 
 ## Dependencies

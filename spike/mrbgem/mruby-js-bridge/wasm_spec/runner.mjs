@@ -13,7 +13,8 @@
 import { readFile, readdir } from "node:fs/promises";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { dirname, join, resolve } from "node:path";
-import { boot, evalRuby, env, fs, stdin, args, Directory, File } from "../js/adapter.js";
+import { boot, evalRuby, env, fs, stdin, args, Directory, File, debug } from "../js/adapter.js";
+if (process.env.MRUBY_JS_BRIDGE_TRACE) debug.trace = true;
 
 // --- Browser-ish env shim --------------------------------------------------
 // Tests use Date / Map / Set / Error / Promise / EventTarget / setTimeout —

@@ -78,8 +78,12 @@ MRuby::CrossBuild.new("wasi") do |conf|
   conf.gem core: "mruby-time"
   conf.gem core: "mruby-random"
 
-  # Our gem (mruby ↔ JS bridge)
+  # Our gems
   conf.gem File.expand_path("../mrbgem/mruby-js-bridge", __dir__)
+  # mruby-wasi-dir provides Dir.entries / Dir.mkdir / Dir.rmdir /
+  # Dir.exist? on top of wasi-libc's <dirent.h>, which the bridge's
+  # WASI imports (path_open(O_DIRECTORY) / fd_readdir / ...) implement.
+  conf.gem File.expand_path("../mrbgem/mruby-wasi-dir", __dir__)
 
   # We only need libmruby.a; the spike provides its own main via main/main.c
   conf.bins = []
