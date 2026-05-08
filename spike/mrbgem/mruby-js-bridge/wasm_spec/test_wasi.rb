@@ -72,7 +72,7 @@ Spec.describe "WASI: args → ARGV" do
   end
 end
 
-Spec.describe "WASI: filesystem → File.read / File.open" do
+Spec.describe "WASI: filesystem read → File.read / File.open" do
   Spec.assert "File.read returns the bytes the host injected via fs.set" do
     # The runner pre-populates these; see wasm_spec/runner.mjs.
     content = File.read("/spec_fixture.txt")
@@ -93,8 +93,49 @@ Spec.describe "WASI: filesystem → File.read / File.open" do
   Spec.assert "binary fixture round-trips" do
     bytes = File.read("/spec_binary.dat")
     Spec.assert_equal 4, bytes.bytesize
-    # 0xDE 0xAD 0xBE 0xEF
     Spec.assert_equal 0xDE, bytes.bytes[0]
     Spec.assert_equal 0xEF, bytes.bytes[3]
+  end
+end
+
+Spec.describe "WASI: filesystem write → File.write / append / delete / truncate" do
+  Spec.assert "File.open('w') creates a fresh file and writes to it" do
+    File.open("/spec_w_create.txt", "w") { |f| f.write("hello\n"); f.write("world\n") }
+    Spec.assert_equal "hello\nworld\n", File.read("/spec_w_create.txt")
+  end
+
+  Spec.assert "File.open('w') on existing file truncates" do
+    File.open("/spec_w_trunc.txt", "w") { |f| f.write("first version, very long\n") }
+    File.open("/spec_w_trunc.txt", "w") { |f| f.write("short\n") }
+    Spec.assert_equal "short\n", File.read("/spec_w_trunc.txt")
+  end
+
+  Spec.assert "File.open('a') appends" do
+    File.open("/spec_append.txt", "w") { |f| f.write("line1\n") }
+    File.open("/spec_append.txt", "a") { |f| f.write("line2\n") }
+    File.open("/spec_append.txt", "a") { |f| f.write("line3\n") }
+    Spec.assert_equal "line1\nline2\nline3\n", File.read("/spec_append.txt")
+  end
+
+  Spec.assert "File.delete removes the file" do
+    File.open("/spec_to_delete.txt", "w") { |f| f.write("doomed") }
+    Spec.assert_equal "doomed", File.read("/spec_to_delete.txt")
+    File.delete("/spec_to_delete.txt")
+    Spec.assert_raises(RuntimeError) { File.read("/spec_to_delete.txt") }
+  end
+
+  Spec.assert "f.truncate(n) shrinks the file" do
+    File.open("/spec_truncate.txt", "w") { |f| f.write("0123456789") }
+    File.open("/spec_truncate.txt", "r+") { |f| f.truncate(4) }
+    Spec.assert_equal "0123", File.read("/spec_truncate.txt")
+  end
+
+  Spec.assert "binary write/read round-trip" do
+    bytes = "\xCA\xFE\xBA\xBE".b
+    File.open("/spec_binary_out.dat", "wb") { |f| f.write(bytes) }
+    read_back = File.open("/spec_binary_out.dat", "rb") { |f| f.read }
+    Spec.assert_equal 4, read_back.bytesize
+    Spec.assert_equal 0xCA, read_back.bytes[0]
+    Spec.assert_equal 0xBE, read_back.bytes[3]
   end
 end

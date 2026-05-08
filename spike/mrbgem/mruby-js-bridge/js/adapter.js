@@ -382,14 +382,45 @@ const jsBridgeImports = {
 const stdoutBuffer = [];
 const wasiImports = {
   fd_write(fd, iovsPtr, iovsLen, nwrittenPtr) {
-    const memory = instance.exports.memory;
-    const view = new DataView(memory.buffer);
+    const view = new DataView(instance.exports.memory.buffer);
+    const memory = new Uint8Array(instance.exports.memory.buffer);
+
+    // File write path: dispatch to virtual fs.
+    if (openFiles.has(fd)) {
+      const f = openFiles.get(fd);
+      const data = fs.get(f.path);
+      // Sum up total bytes to write (so we resize once).
+      let needed = 0;
+      for (let i = 0; i < iovsLen; i++) needed += view.getUint32(iovsPtr + i * 8 + 4, true);
+      const writeStart = f.append ? data.length : f.pos;
+      const newSize = Math.max(data.length, writeStart + needed);
+      let target = data;
+      if (newSize > data.length) {
+        target = new Uint8Array(newSize);
+        target.set(data);
+        fs.set(f.path, target);
+      }
+      let pos = writeStart;
+      let total = 0;
+      for (let i = 0; i < iovsLen; i++) {
+        const ptr = view.getUint32(iovsPtr + i * 8, true);
+        const len = view.getUint32(iovsPtr + i * 8 + 4, true);
+        target.set(memory.subarray(ptr, ptr + len), pos);
+        pos += len;
+        total += len;
+      }
+      if (!f.append) f.pos = pos;
+      view.setUint32(nwrittenPtr, total, true);
+      return 0;
+    }
+
+    // Stdio path: route fd 1/2 (and any unknown fd) to console.log,
+    // line-buffered.
     let total = 0;
     for (let i = 0; i < iovsLen; i++) {
       const ptr = view.getUint32(iovsPtr + i * 8, true);
       const len = view.getUint32(iovsPtr + i * 8 + 4, true);
-      const bytes = new Uint8Array(memory.buffer, ptr, len);
-      const str = decoder.decode(bytes);
+      const str = decoder.decode(memory.subarray(ptr, ptr + len));
       stdoutBuffer.push(str);
       if (str.includes("\n")) {
         const joined = stdoutBuffer.join("");
@@ -514,21 +545,35 @@ const wasiImports = {
     return 0;
   },
   path_open(dirfd, _dirflags, pathPtr, pathLen,
-            _oflags, _rightsBase /* i64 BigInt */, _rightsInh /* i64 BigInt */,
-            _fdflags, fdPtr) {
-    if (debug.trace) console.log(`[wasi] path_open dirfd=${dirfd} path="${readUtf8(pathPtr, pathLen)}" fdPtr=${fdPtr}`);
+            oflags, _rightsBase /* i64 BigInt */, _rightsInh /* i64 BigInt */,
+            fdflags, fdPtr) {
+    // oflags bits (WASI preview1): 1=CREAT, 2=DIRECTORY, 4=EXCL, 8=TRUNC
+    // fdflags bits: 1=APPEND, 2=DSYNC, 4=NONBLOCK, 8=RSYNC, 16=SYNC
+    if (debug.trace) console.log(`[wasi] path_open dirfd=${dirfd} path="${readUtf8(pathPtr, pathLen)}" oflags=${oflags} fdflags=${fdflags}`);
     if (dirfd !== PREOPEN_FD) return 8;
     const relPath = readUtf8(pathPtr, pathLen);
     const fullPath = resolvePath(relPath);
-    if (!fs.has(fullPath)) {
-      if (debug.trace) console.log(`[wasi] path_open ENOENT: ${fullPath}`);
-      return 44; // ENOENT
+
+    const create = !!(oflags & 1);
+    const excl   = !!(oflags & 4);
+    const trunc  = !!(oflags & 8);
+    const append = !!(fdflags & 1);
+
+    const exists = fs.has(fullPath);
+    if (excl && exists) return 20;       // EEXIST
+    if (!exists && !create) return 44;   // ENOENT
+    if (!exists) {
+      fs.set(fullPath, new Uint8Array(0));
+    } else if (trunc) {
+      fs.set(fullPath, new Uint8Array(0));
     }
+
+    const data = fs.get(fullPath);
     const fd = nextFileFd++;
-    openFiles.set(fd, { path: fullPath, pos: 0 });
+    openFiles.set(fd, { path: fullPath, pos: append ? data.length : 0, append });
     const view = new DataView(instance.exports.memory.buffer);
     view.setUint32(fdPtr, fd, true);
-    if (debug.trace) console.log(`[wasi] path_open OK: ${fullPath} → fd=${fd}`);
+    if (debug.trace) console.log(`[wasi] path_open OK: ${fullPath} → fd=${fd} (append=${append}, trunc=${trunc}, create=${create})`);
     return 0;
   },
   path_filestat_get(dirfd, _flags, pathPtr, pathLen, ptr) {
@@ -616,25 +661,86 @@ const wasiImports = {
     }
     return 0;
   },
+  // write-side filesystem ops ----------------------------------------------
+  fd_filestat_set_size(fd, size /* i64 BigInt */) {
+    const f = openFiles.get(fd);
+    if (!f) return 8; // EBADF
+    const data = fs.get(f.path);
+    if (!data) return 8;
+    const newSize = Number(size);
+    if (newSize < 0) return 28; // EINVAL
+    if (newSize < data.length) {
+      fs.set(f.path, data.slice(0, newSize));
+    } else if (newSize > data.length) {
+      const grown = new Uint8Array(newSize);
+      grown.set(data);
+      fs.set(f.path, grown);
+    }
+    return 0;
+  },
+  fd_pwrite(fd, iovsPtr, iovsLen, offset /* i64 BigInt */, nwrittenPtr) {
+    const f = openFiles.get(fd);
+    if (!f) return 8;
+    const view = new DataView(instance.exports.memory.buffer);
+    const memory = new Uint8Array(instance.exports.memory.buffer);
+    const data = fs.get(f.path);
+    let needed = 0;
+    for (let i = 0; i < iovsLen; i++) needed += view.getUint32(iovsPtr + i * 8 + 4, true);
+    const startPos = Number(offset);
+    const newSize = Math.max(data.length, startPos + needed);
+    let target = data;
+    if (newSize > data.length) {
+      target = new Uint8Array(newSize);
+      target.set(data);
+      fs.set(f.path, target);
+    }
+    let pos = startPos;
+    let total = 0;
+    for (let i = 0; i < iovsLen; i++) {
+      const ptr = view.getUint32(iovsPtr + i * 8, true);
+      const len = view.getUint32(iovsPtr + i * 8 + 4, true);
+      target.set(memory.subarray(ptr, ptr + len), pos);
+      pos += len;
+      total += len;
+    }
+    view.setUint32(nwrittenPtr, total, true);
+    return 0;
+  },
+  path_unlink_file(dirfd, pathPtr, pathLen) {
+    if (dirfd !== PREOPEN_FD) return 8;
+    const fullPath = resolvePath(readUtf8(pathPtr, pathLen));
+    if (!fs.has(fullPath)) return 44; // ENOENT
+    fs.delete(fullPath);
+    return 0;
+  },
+  // Our flat Map model doesn't track explicit dir entries — directories
+  // are implicit. Treat mkdir / rmdir as no-ops for compatibility with
+  // FileUtils.mkdir_p style code that doesn't actually need a real dir.
+  path_create_directory(_dirfd, _pathPtr, _pathLen) { return 0; },
+  path_remove_directory(_dirfd, _pathPtr, _pathLen) { return 0; },
+
   // unimplemented (not exercised in current scope) — return ENOSYS-ish ------
-  fd_filestat_set_size(_fd, _size) { return 28; },
   fd_filestat_set_times(_fd, _atim, _mtim, _flags) { return 28; },
   fd_pread(_fd, _iovs, _iovsLen, _offset, _nreadPtr) { return 28; },
-  fd_pwrite(_fd, _iovs, _iovsLen, _offset, _nwrittenPtr) { return 28; },
   fd_readdir(_fd, _buf, _bufLen, _cookie, _bufused) { return 28; },
   fd_renumber(_from, _to) { return 28; },
   fd_sync(_fd) { return 0; },
   fd_advise(_fd, _offset, _len, _advice) { return 0; },
   fd_allocate(_fd, _offset, _len) { return 28; },
   fd_datasync(_fd) { return 0; },
-  path_create_directory(_fd, _path, _pathLen) { return 28; },
   path_filestat_set_times() { return 28; },
   path_link() { return 28; },
   path_readlink() { return 28; },
-  path_remove_directory() { return 28; },
-  path_rename() { return 28; },
+  path_rename(oldDirfd, oldPathPtr, oldPathLen, newDirfd, newPathPtr, newPathLen) {
+    if (oldDirfd !== PREOPEN_FD || newDirfd !== PREOPEN_FD) return 8;
+    const oldPath = resolvePath(readUtf8(oldPathPtr, oldPathLen));
+    const newPath = resolvePath(readUtf8(newPathPtr, newPathLen));
+    if (!fs.has(oldPath)) return 44;
+    fs.set(newPath, fs.get(oldPath));
+    fs.delete(oldPath);
+    return 0;
+  },
   path_symlink() { return 28; },
-  path_unlink_file() { return 28; },
   poll_oneoff() { return 28; },
   sched_yield() { return 0; },
 };
