@@ -218,40 +218,50 @@ Tested against **mruby 4.0.0**.
 
 ## WASI runtime compatibility
 
-The wasm built by this gem (and the sibling `mruby-wasm-cli`) uses
-clang's SJLJ implementation, which lowers `setjmp`/`longjmp` to the
-WebAssembly Exception Handling proposal:
+mruby uses `setjmp`/`longjmp` (for exceptions and GC mark scan); clang
+lowers these to the WebAssembly Exception Handling proposal. There are
+two on-the-wire forms:
 
-- **JS-host build** (`mruby.wasm`) uses **legacy** EH (default clang
-  behaviour): `try`/`catch`/`throw` instructions. Widely supported by
-  V8-based hosts.
-- **CLI build** (`mruby-cli.wasm`) uses **modern** EH (`try_table`
-  with `exnref`) via `-mllvm -wasm-use-legacy-eh=false`. Required for
-  wasmtime ≥37.
+- **Legacy EH** (`try` / `catch` / `throw` / `delegate`): the original
+  proposal, widely supported but deprecated as of 2025. clang's default.
+- **Modern EH** (`try_table` with `exnref`): finished proposal (W3C
+  CG, 2025-07-23, included in Wasm 3.0). Supported by Chrome 137+,
+  Firefox 131+, Safari 18.4+ by default. Opt-in via
+  `-mllvm -wasm-use-legacy-eh=false`.
+
+This gem ships two wasm artefacts with different EH choices:
+
+| Build | EH form | Why |
+|---|---|---|
+| **JS-host** (`mruby.wasm`) | Legacy | Maximum browser compatibility — works on V8/JSC/SpiderMonkey going back several years without flags. |
+| **CLI** (`mruby-cli.wasm`) | Modern | Required for wasmtime ≥37 (Cranelift only implements modern EH). |
 
 Tested runtime support:
 
-| Runtime | JS-host build | CLI build | Notes |
-|---|---|---|---|
-| **Node.js (`WebAssembly.compile`)** | ✓ default | ✓ with `--experimental-wasm-exnref` | V8 has full EH support |
-| Browser (Chrome / Safari / Firefox) | ✓ | ✓ (modern EH stable in recent versions) | V8 / JSC / SpiderMonkey |
-| **Bun** | ✓ (expected) | ✓ (expected) | JSC-based |
-| Cloudflare Workers / V8-based edge | ✓ (expected) | ✓ (expected) | V8-based |
-| **wasmtime ≥37** | n/a | **✓** with `-W exceptions=y` | Cranelift's modern EH implementation landed in v37 |
-| wasmtime ≤36 | n/a | ✗ | Cranelift's `Throw` not implemented before v37 |
-| **wasmer 7.x** | n/a | ✗ | EH proposal not yet implemented |
-| **wazero** | n/a | ✗ | EH proposal not yet implemented |
+| Runtime | JS-host build | CLI build |
+|---|---|---|
+| **Browser** (Chrome 137+ / Firefox 131+ / Safari 18.4+) | ✓ default | ✓ default |
+| **Node.js** (24+) | ✓ default (browser-style `WebAssembly.compile`) | ✓ with `--experimental-wasm-exnref` |
+| **Bun** | ✓ (expected) | ✓ (expected, JSC ≥ Safari 18.4) |
+| **Cloudflare Workers / Deno / other V8 edge** | ✓ | likely ✓ (not officially documented) |
+| **wasmtime ≥37** | n/a | **✓** with `-W exceptions=y` |
+| wasmtime ≤36 | n/a | ✗ Cranelift `Throw` not implemented before v37 |
+| **wasmer 7.x** | n/a | ✗ EH proposal not yet implemented |
+| **wazero** | n/a | ✗ EH proposal not yet implemented |
 
 Run the CLI build:
 
 ```bash
-# Via Node's built-in WASI
+# wasmtime ≥37
+wasmtime -W exceptions=y --dir=. host/mruby-cli.wasm script.rb
+
+# Node.js — needs --experimental-wasm-exnref for the exnref reference type
 node --experimental-wasi-unstable-preview1 --experimental-wasm-exnref \
     host/run-cli-node.mjs script.rb
-
-# Via wasmtime ≥37
-wasmtime -W exceptions=y --dir=. host/mruby-cli.wasm script.rb
 ```
+
+(The JS-host build runs in any modern V8/JSC/SpiderMonkey browser
+without flags. See `host/phase2c.html` and the kotoyomi sample.)
 
 ## Related projects
 
