@@ -1,16 +1,20 @@
-# mruby cross-build for WASI (wasm32-wasip1)
+# mruby cross-build for WASI (wasm32-wasip1) — JS-host variant.
+#
+# Sibling to build_config/wasi-cli.rb (CLI / wasmtime variant). This
+# config is the JS-host build: includes mruby-js-bridge so the wasm
+# carries the js_bridge.* primitive imports that the gem's JS adapter
+# (mrbgem/mruby-js-bridge/js/index.js — `createVM` factory) satisfies.
 #
 # Requires: WASI_SDK_PATH environment variable pointing to an extracted
 # wasi-sdk distribution (e.g. /opt/wasi-sdk).
 #
-# Lives at spike/build_config/wasi.rb (outside the mruby clone, which is
-# gitignored). __dir__-relative paths below resolve to spike/stubs and
-# spike/mrbgem; pass the absolute path via MRUBY_CONFIG (the Makefile does).
+# __dir__-relative paths below resolve to spike/stubs and spike/mrbgem;
+# pass the absolute path via MRUBY_CONFIG (the Makefile does).
 #
 # Usage:
 #   cd spike/mruby
 #   WASI_SDK_PATH=/path/to/wasi-sdk rake \
-#     MRUBY_CONFIG=$(realpath ../build_config/wasi.rb)
+#     MRUBY_CONFIG=$(realpath ../build_config/wasi-js.rb)
 
 wasi_sdk = ENV.fetch("WASI_SDK_PATH") { abort "Set WASI_SDK_PATH" }
 sysroot = "#{wasi_sdk}/share/wasi-sysroot"
@@ -18,7 +22,7 @@ clang = "#{wasi_sdk}/bin/clang"
 ar = "#{wasi_sdk}/bin/llvm-ar"
 target = "wasm32-wasip1"
 
-MRuby::CrossBuild.new("wasi") do |conf|
+MRuby::CrossBuild.new("wasi-js") do |conf|
   conf.toolchain :clang
 
   conf.cc.command = clang

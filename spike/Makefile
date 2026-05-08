@@ -22,8 +22,8 @@ MRUBY_REPO := https://github.com/mruby/mruby.git
 MRUBY_TAG := 4.0.0
 # Build config lives outside the mruby clone (which is gitignored) so we
 # don't have to track files in someone else's source tree.
-MRUBY_CONFIG := $(CURDIR)/build_config/wasi.rb
-LIBMRUBY := $(MRUBY_DIR)/build/wasi/lib/libmruby.a
+MRUBY_CONFIG := $(CURDIR)/build_config/wasi-js.rb
+LIBMRUBY := $(MRUBY_DIR)/build/wasi-js/lib/libmruby.a
 
 MAIN_C := $(CURDIR)/main/main.c
 HOST_DIR := $(CURDIR)/host
@@ -88,7 +88,7 @@ $(HOST_WASM): $(MAIN_C) $(LIBMRUBY) | $(HOST_DIR)
 	  -mllvm -wasm-enable-sjlj \
 	  -DMRB_NO_BOXING -DMRB_UTF8_STRING \
 	  -I$(MRUBY_DIR)/include \
-	  -I$(MRUBY_DIR)/build/wasi/include \
+	  -I$(MRUBY_DIR)/build/wasi-js/include \
 	  -Wl,--allow-undefined \
 	  -Wl,--export=js_bridge_invoke_proc \
 	  -Wl,--export=js_bridge_eval_handle \
@@ -253,7 +253,7 @@ dist-cli: cli-link
 	@echo "  node --experimental-wasi-unstable-preview1 host/run-cli-node.mjs path/to/script.rb"
 
 clean:
-	rm -rf $(MRUBY_DIR)/build/wasi $(MRUBY_DIR)/build/wasi-cli
+	rm -rf $(MRUBY_DIR)/build/wasi-js $(MRUBY_DIR)/build/wasi-cli
 	rm -f $(HOST_WASM) $(HOST_WASM_CLI)
 	rm -rf $(CURDIR)/dist
 
