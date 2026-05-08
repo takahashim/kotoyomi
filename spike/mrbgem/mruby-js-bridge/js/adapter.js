@@ -780,8 +780,51 @@ export function evalRuby(source) {
   }
 }
 
+// The bundled WASI implementation (preview1, in-memory). Exported so
+// callers can read defaults, mix specific entries into their own
+// implementation, or pass it through unchanged via `boot(url, { wasi })`.
+export { wasiImports };
+
 // --- Boot -------------------------------------------------------------------
-export async function boot(wasmUrl) {
+/**
+ * Instantiate the wasm and run `_start`.
+ *
+ * @param {string} wasmUrl  URL to mruby.wasm.
+ * @param {object} [options]
+ *
+ * @param {object} [options.wasi]
+ *   Custom `wasi_snapshot_preview1` import object. Defaults to the
+ *   bundled `wasiImports` (in-memory FS via the exported `fs` Map,
+ *   env/args/stdin from the exported objects above, real clock/random).
+ *
+ *   To swap in a more capable shim such as `@bjorn3/browser_wasi_shim`
+ *   (tree VFS, fd_readdir, OPFS bindings, multiple preopens, etc.):
+ *
+ *     import { boot } from "mruby-js-bridge";
+ *     import { WASI } from "@bjorn3/browser_wasi_shim";
+ *
+ *     const wasi = new WASI([], [], [...preopens]);
+ *     await boot(url, {
+ *       wasi: wasi.wasiImport,
+ *       onStart: (instance) => wasi.start(instance),
+ *     });
+ *
+ *   The `js_bridge.*` imports (the JSBridge layer itself) are always
+ *   provided by this adapter regardless of which WASI is used.
+ *
+ * @param {(instance: WebAssembly.Instance) => void} [options.onStart]
+ *   Called once immediately after `WebAssembly.instantiateStreaming`.
+ *   Default behaviour: call `instance.exports._start()` (the WASI
+ *   command-module entry).
+ *
+ *   Override this when your custom WASI needs to bind the instance
+ *   before `_start` runs (browser_wasi_shim does:
+ *   `wasi.start(instance)` which sets `wasi.inst = instance` and *then*
+ *   invokes `_start`). The bundled `wasiImports` reads the instance
+ *   lazily at every call so the default works without a custom hook.
+ */
+export async function boot(wasmUrl, options = {}) {
+  const wasi = options.wasi ?? wasiImports;
   const response = await fetch(wasmUrl);
   if (!response.ok) {
     throw new Error(`Failed to fetch ${wasmUrl}: ${response.status}`);
@@ -789,10 +832,13 @@ export async function boot(wasmUrl) {
   const result = await WebAssembly.instantiateStreaming(response, {
     env: envImports,
     js_bridge: jsBridgeImports,
-    wasi_snapshot_preview1: wasiImports,
+    wasi_snapshot_preview1: wasi,
   });
   instance = result.instance;
-  if (typeof instance.exports._start === "function") {
+
+  if (options.onStart) {
+    options.onStart(instance);
+  } else if (typeof instance.exports._start === "function") {
     try {
       instance.exports._start();
     } catch (err) {
