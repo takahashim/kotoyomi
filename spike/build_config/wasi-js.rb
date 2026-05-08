@@ -49,6 +49,13 @@ MRuby::CrossBuild.new("wasi-js") do |conf|
   # Allow undefined imports (we declare them via __attribute__((import_module)))
   conf.linker.flags << "-Wl,--allow-undefined"
 
+  # Reactor module: export `_initialize` (runs ctors, then returns) instead
+  # of `_start`. The JS host keeps the instance alive and drives execution
+  # by calling exports (`js_eval_handle`, `js_invoke_proc`). The mruby VM
+  # itself is brought up by a __attribute__((constructor)) inside the gem
+  # (callback.c), so no separate main.c is needed.
+  conf.linker.flags << "-mexec-model=reactor"
+
   # Link the SJLJ runtime support; provides __wasm_setjmp / __wasm_longjmp /
   # __wasm_setjmp_test that the SJLJ-via-EH lowering needs.
   conf.linker.libraries << "setjmp"

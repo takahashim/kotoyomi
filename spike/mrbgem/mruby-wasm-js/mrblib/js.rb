@@ -95,7 +95,7 @@ module JS
     # `obj[:opts] = { once: true, capture: false }` naturally.
     def wrap(v)
       case v
-      when Object then v
+      when ::JS::Object then v
       when Integer then Object.new(_from_int(v))
       when Float then Object.new(_from_float(v))
       when String then Object.new(_from_string(v))

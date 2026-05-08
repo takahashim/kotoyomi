@@ -307,7 +307,14 @@ export async function createVM(options = {}) {
 
   if (onStart) {
     onStart(instance);
+  } else if (typeof instance.exports._initialize === "function") {
+    // Reactor module: runs ctors (including the gem's mrb_open + ARGV
+    // boot ctor) and returns. No exit-pseudo-exception to catch.
+    instance.exports._initialize();
   } else if (typeof instance.exports._start === "function") {
+    // Command module fallback (e.g. caller-supplied wasm built without
+    // -mexec-model=reactor). _start can throw a pseudo-exception on exit;
+    // swallow that one path and let real errors propagate.
     try { instance.exports._start(); }
     catch (err) {
       if (err.message && !err.message.includes("exit")) throw err;

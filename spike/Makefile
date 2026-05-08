@@ -25,7 +25,6 @@ MRUBY_TAG := 4.0.0
 MRUBY_CONFIG := $(CURDIR)/build_config/wasi-js.rb
 LIBMRUBY := $(MRUBY_DIR)/build/wasi-js/lib/libmruby.a
 
-MAIN_C := $(CURDIR)/main/main.c
 HOST_DIR := $(CURDIR)/host
 HOST_WASM := $(HOST_DIR)/mruby-js.wasm
 
@@ -83,17 +82,14 @@ $(LIBMRUBY):
 
 link: mruby $(HOST_WASM)
 
-$(HOST_WASM): $(MAIN_C) $(LIBMRUBY) | $(HOST_DIR)
+$(HOST_WASM): $(LIBMRUBY) | $(HOST_DIR)
 	$(CLANG) --target=$(TARGET) --sysroot=$(SYSROOT) \
-	  -mllvm -wasm-enable-sjlj \
-	  -DMRB_NO_BOXING -DMRB_UTF8_STRING \
-	  -I$(MRUBY_DIR)/include \
-	  -I$(MRUBY_DIR)/build/wasi-js/include \
+	  -mexec-model=reactor \
 	  -Wl,--allow-undefined \
 	  -Wl,--export=js_invoke_proc \
 	  -Wl,--export=js_eval_handle \
+	  -Wl,--whole-archive $(LIBMRUBY) -Wl,--no-whole-archive \
 	  -o $(HOST_WASM) \
-	  $(MAIN_C) $(LIBMRUBY) \
 	  -lsetjmp
 	@echo "Built $(HOST_WASM)"
 
