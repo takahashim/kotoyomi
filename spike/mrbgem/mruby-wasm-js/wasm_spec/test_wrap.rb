@@ -1,6 +1,6 @@
-JS = JSBridge
 
-Spec.describe "JSBridge.wrap / try_convert / object / array / #to_js" do
+
+Spec.describe "JS.wrap / try_convert / object / array / #to_js" do
   Spec.assert "wrap Integer" do
     Spec.assert_equal 42, JS.wrap(42).to_i
   end
@@ -44,7 +44,7 @@ Spec.describe "JSBridge.wrap / try_convert / object / array / #to_js" do
     Spec.assert_equal "true", h[:opts][:once].to_s
   end
 
-  Spec.assert "wrap Value passes through" do
+  Spec.assert "wrap JS::Object passes through" do
     v = JS.eval("42")
     Spec.assert_true v == JS.wrap(v)
   end
@@ -61,12 +61,12 @@ Spec.describe "JSBridge.wrap / try_convert / object / array / #to_js" do
     Spec.assert_equal 42, JS.try_convert(42).to_i
   end
 
-  Spec.assert "JSBridge.object" do
+  Spec.assert "JS.object" do
     obj = JS.object(once: true)
     Spec.assert_equal "true", obj[:once].to_s
   end
 
-  Spec.assert "JSBridge.array" do
+  Spec.assert "JS.array" do
     arr = JS.array([10, 20, 30])
     Spec.assert_equal 3, arr.length
     Spec.assert_equal 20, arr[1].to_i
@@ -88,7 +88,7 @@ Spec.describe "JSBridge.wrap / try_convert / object / array / #to_js" do
     Spec.assert_equal 42, 42.to_js.to_i
   end
 
-  Spec.assert "Value#to_js is identity" do
+  Spec.assert "JS::Object#to_js is identity" do
     v = JS.eval("[]")
     Spec.assert_true v.equal?(v.to_js)
   end

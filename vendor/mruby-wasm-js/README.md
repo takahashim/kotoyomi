@@ -3,7 +3,7 @@
 Minimal mruby ↔ JavaScript bridge for WASM hosts. Lets Ruby code running
 in an mruby VM compiled to WebAssembly call into the JS host (browser,
 Node, etc.) and vice versa, with a `ruby.wasm`-compatible feel
-(`JSBridge.global[:document][:title] = "hello"`).
+(`JS.global[:document][:title] = "hello"`).
 
 ## Layout
 
@@ -11,9 +11,9 @@ Node, etc.) and vice versa, with a `ruby.wasm`-compatible feel
 mruby-wasm-js/
 ├── mrbgem.rake               # gem spec
 ├── README.md                 # this file
-├── src/js_bridge.c           # C primitives (compiled into wasm)
-├── mrblib/js_bridge.rb       # JSBridge module + Value class (compiled into wasm)
-├── js/index.js               # JS-side entry point (createVM factory + JSBridge core)
+├── src/js.c           # C primitives (compiled into wasm)
+├── mrblib/js.rb       # JS module + Object class (compiled into wasm)
+├── js/index.js               # JS-side entry point (createVM factory + JS core)
 ├── js/wasi-preview1.js       # bundled WASI preview1 implementation
 ├── js/_memory.js             # internal: shared TextDecoder/Encoder + memory helpers
 ├── js/debug.js               # global debug toggle
@@ -38,7 +38,7 @@ MRuby::CrossBuild.new("wasi") do |conf|
   # ... your wasi-sdk setup ...
   conf.gembox "default-no-stdio"
   conf.gem core: "mruby-method"   # required (method_missing dispatch)
-  conf.gem core: "mruby-fiber"    # required (Value#await uses Fiber.yield)
+  conf.gem core: "mruby-fiber"    # required (JS::Object#await uses Fiber.yield)
   conf.gem core: "mruby-compiler" # required if you want runtime mrb_load_string
   conf.gem core: "mruby-io"       # optional (File.read/open via WASI fs)
   conf.gem core: "mruby-time"     # optional (Time.now via WASI clock_time_get)
@@ -51,12 +51,12 @@ MRuby::CrossBuild.new("wasi") do |conf|
 end
 ```
 
-The gem's C side declares WASM imports under the module name `js_bridge`
-(e.g. `js_bridge.js_eval`, `js_bridge.js_call`). Your linker must allow
+The gem's C side declares WASM imports under the module name `js`
+(e.g. `js.js_eval`, `js.js_call`). Your linker must allow
 these undefined symbols:
 
 ```
--Wl,--allow-undefined -Wl,--export=js_bridge_invoke_proc -Wl,--export=js_bridge_eval_handle
+-Wl,--allow-undefined -Wl,--export=js_invoke_proc -Wl,--export=js_eval_handle
 ```
 
 ### 2. Spawn a VM from the JS host
@@ -70,18 +70,18 @@ import { createVM } from "mruby-wasm-js";
 import { createVM } from "./vendor/mruby-wasm-js/index.js";
 
 const vm = await createVM({ wasm: "/path/to/mruby-js.wasm" });
-vm.eval("puts JSBridge.global[:navigator][:userAgent].to_s");
+vm.eval("puts JS.global[:navigator][:userAgent].to_s");
 ```
 
 `createVM(options)` fetches the wasm, instantiates it with all required
-imports (`js_bridge.*` for the bridge, `wasi_snapshot_preview1.*` for
+imports (`js.*` for the JS imports, `wasi_snapshot_preview1.*` for
 `puts`, `Time.now`, `File.read`, etc.), runs `_start`, and returns a
 **VM handle** with all per-instance state. Each `createVM()` call gets
 an independent handle table + WASI state — multiple VMs can coexist in
 one process (useful for tests, sandboxing, hot reload).
 
 `vm.eval(source)` parses + runs Ruby source on the live VM. Each call
-is auto-wrapped in a Fiber so `Value#await` works at top level.
+is auto-wrapped in a Fiber so `JS::Object#await` works at top level.
 
 The VM handle exposes:
 
@@ -161,14 +161,14 @@ const vm = await createVM({
 
 When you pass `options.wasi`, `vm.fs` / `vm.env` / `vm.args` / `vm.stdin`
 are absent from the returned object (your WASI owns that state — use
-`"fs" in vm` to discriminate). The `js_bridge.*` imports (the JSBridge
+`"fs" in vm` to discriminate). The `js.*` imports (the JS
 layer itself) are always provided by this adapter regardless of which
 WASI is used.
 
 ### 3. Dispatch from Ruby
 
 ```ruby
-JS = JSBridge
+
 
 doc = JS.global[:document]                  # property access
 doc.title = "hello"                         # method_missing → setter
@@ -180,7 +180,7 @@ JS.global[:Promise].resolve(42).await            # blocking await (Fiber-based)
 JS.global[:Date].new(2026, 4, 8)            # JS constructor
 ```
 
-See `mrblib/js_bridge.rb` for the full surface (`==`, `typeof`,
+See `mrblib/js.rb` for the full surface (`==`, `typeof`,
 `instanceof?`, `to_a`, `each`, `to_proc`, `inspect`, ...).
 
 ## Running the spec
@@ -208,7 +208,7 @@ Expected: `167/167 tests pass (235 assertions)`. Exit code 0 on success,
 | Gem | Why |
 |---|---|
 | `mruby-method` | enables `method_missing` dispatch |
-| `mruby-fiber` | required for `Value#await` (Fiber.yield/resume) |
+| `mruby-fiber` | required for `JS::Object#await` (Fiber.yield/resume) |
 | `mruby-compiler` | required for `evalRuby` (runtime `mrb_load_string`) |
 | `mruby-io` *(optional)* | `File.read` / `File.open` — backed by the in-memory `fs` Map via WASI |
 | `mruby-time` *(optional)* | `Time.now` — backed by WASI `clock_time_get` |

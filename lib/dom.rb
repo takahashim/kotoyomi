@@ -1,6 +1,6 @@
 # mruby + mruby-js-bridge 前提。`require "js"` は不要 (gem として
-# JSBridge module が boot 時に自動定義される)。
-JS = JSBridge
+# JS module が boot 時に自動定義される)。
+
 
 module Kotoyomi
   # JS の document / Element を素直に扱うための薄いラッパー。
@@ -15,7 +15,7 @@ module Kotoyomi
         @node = node
         # registered listeners のラッパー Value をここで保持。Element の
         # 寿命中は GC されないようにするため (callback の C-side proc は
-        # JSBridge 側で pin されるが、JS ラッパー関数の handle はここが
+        # JS 側で pin されるが、JS ラッパー関数の handle はここが
         # rooter になる)
         @callbacks = []
       end
@@ -51,7 +51,7 @@ module Kotoyomi
 
       def append(child)
         # `Element === child` は Ruby の Module#=== で C 実装。child が
-        # JSBridge::Value (BasicObject) の場合に is_a? を呼ばずに済む
+        # JS::Object (BasicObject) の場合に is_a? を呼ばずに済む
         @node.appendChild((Element === child) ? child.native : child)
         self
       end
@@ -82,7 +82,7 @@ module Kotoyomi
       end
 
       # イベント購読 (ブロックが JS コールバックとして渡る)
-      # options に JSBridge.object(once: true) などを渡せる
+      # options に JS.object(once: true) などを渡せる
       def on(event, options = nil, &block)
         @callbacks << @node.on(event.to_s, options, &block)
         self

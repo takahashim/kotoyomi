@@ -27,7 +27,7 @@ const vm = await createVM({ wasm: "./mruby-js.wasm" });
 
 const SCRIPT = `
 puts 'BasicObject + await-replacement test'
-JS = JSBridge
+
 doc = JS.global[:document]
 
 doc.title = 'BasicObject OK'

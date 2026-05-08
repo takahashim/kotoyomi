@@ -1,6 +1,6 @@
 // JS host adapter for the mruby-wasm-js mrbgem.
 //
-// Provides the JSBridge core via a single factory:
+// Provides the JS core via a single factory:
 //
 //   import { createVM, Directory, File } from "mruby-wasm-js";
 //
@@ -22,7 +22,7 @@
 //   - createHandleTable():        per-VM handle table (alloc/get/release/count)
 //   - createErrorSlot():          per-VM JS exception capture
 //   - inspectValue(v):            pure debug-string formatter
-//   - createJsBridgeImports({…}): builds the 25 js_bridge.* methods
+//   - createJsImports({…}): builds the 25 js.* methods
 //   - createVM(options):          orchestrator — creates state,
 //                                  builds imports, instantiates wasm,
 //                                  runs _start, returns VM handle.
@@ -92,7 +92,7 @@ function createHandleTable() {
 
 /** Per-VM "latest JS exception" slot. The C side calls js_take_error()
  *  right after each potentially-throwing op; if a non-null Error is
- *  pending, it becomes a JSBridge::Error on the Ruby side. Non-Error
+ *  pending, it becomes a JS::Error on the Ruby side. Non-Error
  *  throws (`throw "string"`, `throw 42`, ...) are wrapped so callers
  *  always get an object with `.message`. */
 function createErrorSlot() {
@@ -109,11 +109,11 @@ function createErrorSlot() {
   };
 }
 
-/** Build the 25 `js_bridge.*` import methods, closing over the supplied
+/** Build the 25 `js.*` import methods, closing over the supplied
  *  per-VM state. Splitting this out from createVM means the imports can
  *  be unit-tested or rebuilt independently of the wasm fetch/instantiate
  *  cycle. */
-function createJsBridgeImports({ handles, errorSlot, getInstance }) {
+function createJsImports({ handles, errorSlot, getInstance }) {
   const { readUtf8, writeUtf8, readHandleArray } = createMemoryHelpers(getInstance);
   return {
     // Evaluate JS source and return a handle to the resulting value.
@@ -216,7 +216,7 @@ function createJsBridgeImports({ handles, errorSlot, getInstance }) {
       const wrapper = (...args) => {
         if (debug.trace) console.log(`[trace] wrapper id=${callbackId} fired with`, args);
         const argsHandle = handles.alloc(args);
-        try { getInstance().exports.js_bridge_invoke_proc(callbackId, argsHandle); }
+        try { getInstance().exports.js_invoke_proc(callbackId, argsHandle); }
         finally { handles.release(argsHandle); }
       };
       return handles.alloc(wrapper);
@@ -270,7 +270,7 @@ function createJsBridgeImports({ handles, errorSlot, getInstance }) {
  *       onStart: (instance) => wasi.start(instance),
  *     });
  *
- * The `js_bridge.*` imports (the JSBridge layer itself) are always
+ * The `js.*` imports (the JS layer itself) are always
  * provided by this adapter regardless of which WASI is used.
  */
 export async function createVM(options = {}) {
@@ -282,7 +282,7 @@ export async function createVM(options = {}) {
   let instance = null;
   const getInstance = () => instance;
 
-  const jsBridgeImports = createJsBridgeImports({ handles, errorSlot, getInstance });
+  const jsImports = createJsImports({ handles, errorSlot, getInstance });
 
   const customWasi = options.wasi;
   const wasiImpl = customWasi ? null : createWasiPreview1({
@@ -299,7 +299,7 @@ export async function createVM(options = {}) {
   }
   const result = await WebAssembly.instantiateStreaming(response, {
     env: envImports,
-    js_bridge: jsBridgeImports,
+    js: jsImports,
     wasi_snapshot_preview1: wasiImports,
   });
   instance = result.instance;
@@ -316,7 +316,7 @@ export async function createVM(options = {}) {
 
   function evalRuby(source) {
     const handle = handles.alloc(source);
-    try { return instance.exports.js_bridge_eval_handle(handle); }
+    try { return instance.exports.js_eval_handle(handle); }
     finally { handles.release(handle); }
   }
 

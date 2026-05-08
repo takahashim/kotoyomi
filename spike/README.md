@@ -1,7 +1,7 @@
 # spike: mruby bridge for kotoyomi
 
 `js` gem に依存しない自前 mrbgem で kotoyomi を mruby + WebAssembly 上で動かす実験。
-Phase 1 で `JSBridge.eval` の最小プロトタイプ、Phase 2a–2c で primitive 一式と
+Phase 1 で `JS.eval` の最小プロトタイプ、Phase 2a–2c で primitive 一式と
 BasicObject ベースの Ruby ラッパー、Phase 2d で `lib/*.rb` を移植してブラウザ上で
 sample player を動作させるところまで到達。
 
@@ -32,7 +32,7 @@ spike/
 │       ├── README.md             # gem 単体の使い方
 │       ├── src/js_bridge.c       # C primitive (WASM imports + Value)
 │       ├── mrblib/js_bridge.rb   # BasicObject ベースの Ruby ラッパー
-│       ├── js/index.js          # JS 側 host (createVM factory + JSBridge core)
+│       ├── js/index.js          # JS 側 host (createVM factory + JS core)
 │       └── wasm_spec/            # gem 自前のテスト (test/ ではない: mruby-test 衝突回避)
 │           ├── spec_helper.rb
 │           ├── runner.mjs

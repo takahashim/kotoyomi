@@ -21,7 +21,6 @@
       try {
         const vm = await createVM({ wasm: "./mruby-js.wasm" });
         const SCRIPT = `
-          JS = JSBridge
           doc = JS.global[:document]
           doc.title = 'Phase 2c OK'
           n = JS.eval('1.5 + 2.25').to_f

@@ -1,6 +1,6 @@
-JS = JSBridge
 
-Spec.describe "JSBridge::Value primitives (to_s/i/f, nil?, typeof, etc)" do
+
+Spec.describe "JS::Object primitives (to_s/i/f, nil?, typeof, etc)" do
   Spec.assert "to_s for number" do
     Spec.assert_equal "42", JS.eval("42").to_s
   end

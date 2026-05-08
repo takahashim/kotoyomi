@@ -1,18 +1,18 @@
 /*
  * mruby-wasm-js: minimal mruby ↔ JavaScript bridge for WASM hosts.
  *
- * JSBridge::Value is a C-backed (MRB_TT_DATA) class. Each instance owns
+ * JS::Object is a C-backed (MRB_TT_DATA) class. Each instance owns
  * a JS handle; when the Ruby object is collected by mruby's GC, the
  * free callback releases the JS handle automatically.
  *
- * Ruby blocks/procs can be passed as JS callbacks via JSBridge.callback(&block).
+ * Ruby blocks/procs can be passed as JS callbacks via JS.callback(&block).
  * The block is registered in a callback table (kept alive across calls)
  * and a JS wrapper function is created on the host side. When the wrapper
- * fires, JS calls back into mruby via the `js_bridge_invoke_proc` export.
+ * fires, JS calls back into mruby via the `js_invoke_proc` export.
  *
- * Underscore-prefixed module functions on JSBridge are low-level primitives
+ * Underscore-prefixed module functions on JS are low-level primitives
  * that operate on raw integer handles. The Ruby-friendly API lives in
- * mrblib/js_bridge.rb.
+ * mrblib/js.rb.
  */
 
 #include <mruby.h>
@@ -27,10 +27,10 @@
 #include <mruby/throw.h>
 #include <mruby/variable.h>
 
-/* ---------- WASM imports (js_bridge.* — implemented in adapter.js) ---------- */
+/* ---------- WASM imports (js.* — implemented in adapter.js) ---------- */
 
 #define IMPORT(name) \
-  __attribute__((import_module("js_bridge"), import_name(#name))) extern
+  __attribute__((import_module("js"), import_name(#name))) extern
 
 IMPORT(js_eval) int js_eval(const char *src, int len);
 IMPORT(js_global) int js_global(void);
@@ -61,7 +61,7 @@ IMPORT(js_make_callback) int js_make_callback(int callback_id);
 IMPORT(js_take_error) int js_take_error(void);
 
 /* Diagnostics: # of currently-allocated JS handles (alloc'd minus released).
- * Used by JSBridge.stats so callers can spot leaks. */
+ * Used by JS.stats so callers can spot leaks. */
 IMPORT(js_handle_count) int js_handle_count(void);
 
 #undef IMPORT
@@ -70,8 +70,8 @@ IMPORT(js_handle_count) int js_handle_count(void);
 
 static mrb_state *g_mrb = NULL;
 static mrb_value g_callback_table; /* Ruby Hash, lazily created */
-static mrb_value g_value_class_obj; /* cached JSBridge::Value */
-static mrb_value g_error_class_obj; /* cached JSBridge::Error */
+static mrb_value g_object_class_obj; /* cached JS::Object */
+static mrb_value g_error_class_obj; /* cached JS::Error */
 static int g_next_callback_id = 1;
 
 /* Forward declaration — defined after the Value class section. */
@@ -96,7 +96,7 @@ extract_error_message(mrb_state *mrb, int err_h) {
 }
 
 /* If the JS adapter has stashed an error from the most recent js_call /
- * js_new / js_eval, raise JSBridge::Error with the JS Error's `.message`
+ * js_new / js_eval, raise JS::Error with the JS Error's `.message`
  * as the Ruby exception message AND the original JS Error attached as
  * @js_value (so users can read .name / .stack / .cause / etc. from
  * Ruby). Called at the end of each primitive that can dispatch to JS. */
@@ -109,13 +109,13 @@ raise_if_js_error(mrb_state *mrb) {
   /* wrap_handle takes ownership: Value's GC free callback will release. */
   mrb_value js_err_value = wrap_handle(mrb, err_h);
 
-  /* Construct JSBridge::Error.new(msg) and attach @js_value. */
+  /* Construct JS::Error.new(msg) and attach @js_value. */
   mrb_value exc = mrb_funcall(mrb, g_error_class_obj, "new", 1, msg);
   mrb_iv_set(mrb, exc, mrb_intern_lit(mrb, "@js_value"), js_err_value);
   mrb_exc_raise(mrb, exc);
 }
 
-/* ---------- JSBridge::Value (data type) ---------- */
+/* ---------- JS::Object (data type) ---------- */
 
 typedef struct {
   int handle;
@@ -133,7 +133,7 @@ js_value_free(mrb_state *mrb, void *ptr) {
 }
 
 static const struct mrb_data_type js_value_type = {
-  "JSBridge::Value",
+  "JS::Object",
   js_value_free,
 };
 
@@ -153,11 +153,11 @@ mrb_js_value_handle(mrb_state *mrb, mrb_value self) {
   return mrb_fixnum_value(v->handle);
 }
 
-/* Helper: wrap an int handle as a JSBridge::Value object. */
+/* Helper: wrap an int handle as a JS::Object object. */
 static mrb_value
 wrap_handle(mrb_state *mrb, int handle) {
   mrb_value handle_val = mrb_fixnum_value(handle);
-  return mrb_obj_new(mrb, mrb_class_ptr(g_value_class_obj), 1, &handle_val);
+  return mrb_obj_new(mrb, mrb_class_ptr(g_object_class_obj), 1, &handle_val);
 }
 
 /* ---------- Module-level low-level primitives ---------- */
@@ -356,7 +356,7 @@ ensure_callback_table(mrb_state *mrb) {
   mrb_gc_register(mrb, g_callback_table);
 }
 
-/* JSBridge._make_callback(proc) -> [handle, callback_id]
+/* JS._make_callback(proc) -> [handle, callback_id]
  *
  * Returns BOTH the JS wrapper handle (for passing to JS as a function)
  * AND the callback id (for later release via _release_callback). The
@@ -376,7 +376,7 @@ mrb_js_make_callback(mrb_state *mrb, mrb_value self) {
   return pair;
 }
 
-/* JSBridge._release_callback(callback_id) -> nil
+/* JS._release_callback(callback_id) -> nil
  *
  * Removes the callback Proc from the C-side table so it (and anything
  * it closes over) can be GC'd. Idempotent: removing an already-released
@@ -393,14 +393,14 @@ mrb_js_release_callback(mrb_state *mrb, mrb_value self) {
   return mrb_nil_value();
 }
 
-/* JSBridge._callback_count() -> int — # of currently-registered callbacks. */
+/* JS._callback_count() -> int — # of currently-registered callbacks. */
 static mrb_value
 mrb_js_callback_count(mrb_state *mrb, mrb_value self) {
   if (!mrb_hash_p(g_callback_table)) return mrb_fixnum_value(0);
   return mrb_fixnum_value(mrb_hash_size(mrb, g_callback_table));
 }
 
-/* JSBridge._handle_count() -> int — # of currently-allocated JS handles. */
+/* JS._handle_count() -> int — # of currently-allocated JS handles. */
 static mrb_value
 mrb_js_handle_count(mrb_state *mrb, mrb_value self) {
   return mrb_fixnum_value(js_handle_count());
@@ -411,18 +411,18 @@ mrb_js_handle_count(mrb_state *mrb, mrb_value self) {
  * mruby loads/parses/executes it; on parse/runtime error, prints to
  * stderr and returns 1 (so the host can show an error).
  *
- * The source is wrapped in `JSBridge.__run_in_fiber__ do ... end` so
+ * The source is wrapped in `JS.__run_in_fiber__ do ... end` so
  * that any `Value#await` inside has a Fiber to yield from. If the
  * fiber suspends (await fired), this function still returns 0 — the
  * fiber resumes asynchronously when the awaited Promise settles, via
- * the existing js_bridge_invoke_proc callback path.
+ * the existing js_invoke_proc callback path.
  */
-#define FIBER_PREAMBLE "::JSBridge.__run_in_fiber__ do\n"
+#define FIBER_PREAMBLE "::JS.__run_in_fiber__ do\n"
 #define FIBER_POSTAMBLE "\nend\n"
 
-__attribute__((export_name("js_bridge_eval_handle")))
+__attribute__((export_name("js_eval_handle")))
 int
-js_bridge_eval_handle(int src_handle) {
+js_eval_handle(int src_handle) {
   if (!g_mrb) return 1;
   mrb_state *mrb = g_mrb;
   int len = js_to_string_len(src_handle);
@@ -457,9 +457,9 @@ js_bridge_eval_handle(int src_handle) {
  *
  * Looks up the Ruby Proc, wraps each JS arg as a Value, and yields.
  */
-__attribute__((export_name("js_bridge_invoke_proc")))
+__attribute__((export_name("js_invoke_proc")))
 int
-js_bridge_invoke_proc(int callback_id, int args_handle) {
+js_invoke_proc(int callback_id, int args_handle) {
   if (!g_mrb || !mrb_hash_p(g_callback_table)) return 0;
   mrb_state *mrb = g_mrb;
 
@@ -510,26 +510,27 @@ mrb_mruby_wasm_js_gem_init(mrb_state *mrb) {
   g_mrb = mrb;
   g_callback_table = mrb_nil_value();
 
-  struct RClass *js = mrb_define_module(mrb, "JSBridge");
+  struct RClass *js = mrb_define_module(mrb, "JS");
 
-  /* JSBridge::Error < StandardError — raised when a JS call throws. */
+  /* JS::Error < StandardError — raised when a JS call throws. */
   struct RClass *err_cls = mrb_define_class_under(
     mrb, js, "Error", mrb_class_get(mrb, "StandardError"));
   g_error_class_obj = mrb_obj_value(err_cls);
   mrb_gc_register(mrb, g_error_class_obj);
 
-  /* Value class — BasicObject subclass so method_missing forwards almost
-     everything to JS without colliding with Object's methods (then, tap,
-     itself, ==, inspect, ...). Matches ruby.wasm's JS::Object design. */
+  /* JS::Object — BasicObject subclass so method_missing forwards
+     almost everything to JS without colliding with Ruby's Object
+     methods (then, tap, itself, ==, inspect, ...). Matches ruby.wasm's
+     JS::Object design exactly. */
   struct RClass *basic_object = mrb_class_get(mrb, "BasicObject");
-  struct RClass *value = mrb_define_class_under(mrb, js, "Value", basic_object);
-  MRB_SET_INSTANCE_TT(value, MRB_TT_DATA);
-  mrb_define_method(mrb, value, "initialize", mrb_js_value_init, MRB_ARGS_REQ(1));
-  mrb_define_method(mrb, value, "handle", mrb_js_value_handle, MRB_ARGS_NONE());
-  g_value_class_obj = mrb_obj_value(value);
-  mrb_gc_register(mrb, g_value_class_obj);
+  struct RClass *object_cls = mrb_define_class_under(mrb, js, "Object", basic_object);
+  MRB_SET_INSTANCE_TT(object_cls, MRB_TT_DATA);
+  mrb_define_method(mrb, object_cls, "initialize", mrb_js_value_init, MRB_ARGS_REQ(1));
+  mrb_define_method(mrb, object_cls, "handle", mrb_js_value_handle, MRB_ARGS_NONE());
+  g_object_class_obj = mrb_obj_value(object_cls);
+  mrb_gc_register(mrb, g_object_class_obj);
 
-  /* Low-level primitives. The Ruby-side wrapper is in mrblib/js_bridge.rb. */
+  /* Low-level primitives. The Ruby-side wrapper is in mrblib/js.rb. */
   mrb_define_module_function(mrb, js, "_eval", mrb_js_eval, MRB_ARGS_REQ(1));
   mrb_define_module_function(mrb, js, "_global", mrb_js_global, MRB_ARGS_NONE());
   mrb_define_module_function(mrb, js, "_release", mrb_js_release, MRB_ARGS_REQ(1));

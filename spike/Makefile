@@ -90,8 +90,8 @@ $(HOST_WASM): $(MAIN_C) $(LIBMRUBY) | $(HOST_DIR)
 	  -I$(MRUBY_DIR)/include \
 	  -I$(MRUBY_DIR)/build/wasi-js/include \
 	  -Wl,--allow-undefined \
-	  -Wl,--export=js_bridge_invoke_proc \
-	  -Wl,--export=js_bridge_eval_handle \
+	  -Wl,--export=js_invoke_proc \
+	  -Wl,--export=js_eval_handle \
 	  -o $(HOST_WASM) \
 	  $(MAIN_C) $(LIBMRUBY) \
 	  -lsetjmp
@@ -274,7 +274,7 @@ dist-cmd: cmd-link
 	  '## Related projects' \
 	  '' \
 	  '- [`mruby-wasm-js`](../mruby-wasm-js/) — sibling package: same' \
-	  '  upstream mruby plus a `js_bridge` C primitive layer + JS adapter' \
+	  '  upstream mruby plus a `js` C primitive layer + JS adapter' \
 	  '  (`createVM` factory) for browser / Node hosts.' \
 	  '- [`ruby/ruby.wasm`](https://github.com/ruby/ruby.wasm) — official' \
 	  '  CRuby on WebAssembly. Heavier (full CRuby) but more compatible' \

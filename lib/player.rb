@@ -8,7 +8,7 @@ module Kotoyomi
       @cue_count = @cues[:length].to_i
       @current_index = -1
       # cuechange listener の wrapper Value を保持。Player の寿命中は
-      # GC されないように (JSBridge::Value#on は wrapper を返すが
+      # GC されないように (JS::Object#on は wrapper を返すが
       # 呼び出し側で持たないと release される)
       @callbacks = []
     end

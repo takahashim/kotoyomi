@@ -1,4 +1,4 @@
-JS = JSBridge
+
 
 Spec.describe "block-as-callback / on / then" do
   Spec.assert "addEventListener via call dispatches block" do
@@ -20,7 +20,7 @@ Spec.describe "block-as-callback / on / then" do
     Spec.assert_equal 1, fired
   end
 
-  Spec.assert "callback receives event arg as Value" do
+  Spec.assert "callback receives event arg as JS::Object" do
     target = JS.eval("new EventTarget()")
     captured_type = nil
     target.on(:hello) { |ev| captured_type = ev[:type].to_s }
@@ -37,16 +37,16 @@ Spec.describe "block-as-callback / on / then" do
     Spec.assert_equal [7], log
   end
 
-  Spec.assert "JSBridge.callback wraps block as JS function" do
+  Spec.assert "JS.callback wraps block as JS function" do
     cb = JS.callback { 42 }
     Spec.assert_equal "function", cb.typeof
   end
 
-  Spec.assert "JSBridge.callback raises without a block" do
+  Spec.assert "JS.callback raises without a block" do
     Spec.assert_raises(ArgumentError) { JS.callback }
   end
 
-  Spec.assert "JSBridge.stats returns counters Hash" do
+  Spec.assert "JS.stats returns counters Hash" do
     s = JS.stats
     Spec.assert_equal Hash, s.class
     [:handles, :callbacks, :await_fibers, :callback_ids].each do |k|

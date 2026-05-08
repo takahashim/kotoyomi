@@ -5,7 +5,7 @@
 #   filesystem (path_open / fd_read / fd_close / fd_seek / fd_filestat_get,
 #                 path_filestat_get) →  File.read / File.open
 #
-# spec_helper exports `JS = JSBridge`; here we just exercise the Ruby
+# spec_helper exports `JS = JS`; here we just exercise the Ruby
 # stdlib paths that wasi-libc routes through our imports.
 
 Spec.describe "WASI: clock_time_get → Time.now" do

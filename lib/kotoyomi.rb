@@ -41,7 +41,7 @@ module Kotoyomi
       @audio[:currentTime] = 0
     end
 
-    # mruby-fiber + JSBridge::Value#await により sync 風に書ける。
+    # mruby-fiber + JS::Object#await により sync 風に書ける。
     # eval される JS は track.load / track.error を一発待ちする Promise。
     def wait_for_track_load
       ready = @track_el[:readyState].to_i
@@ -51,19 +51,19 @@ module Kotoyomi
       # adapter.js の js_eval は `new Function('return (' + src + ');')()`
       # で wrap するため、source 末尾に `;` を置くと `(...;)` で
       # syntax error になる。最後の文字は `)` のままにする。
-      JSBridge.eval(<<~JS).await
+      JS.eval(<<~JS).await
         new Promise((resolve, reject) => {
           const el = document.getElementById("track");
           el.addEventListener("load", () => resolve(), { once: true });
           el.addEventListener("error", () => reject(new Error("track load error")), { once: true });
         })
       JS
-    rescue JSBridge::Error => err
+    rescue JS::Error => err
       raise TrackLoadError, err.message
     end
 
     def report_error(err)
-      JSBridge.global[:console].error(err.message)
+      JS.global[:console].error(err.message)
       @error_el.text = "起動に失敗しました。\n#{err.message}"
       @error_el.show
     end

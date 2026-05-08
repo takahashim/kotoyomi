@@ -1,6 +1,6 @@
-JS = JSBridge
 
-Spec.describe "JSBridge::Value#new (constructor invocation)" do
+
+Spec.describe "JS::Object#new (constructor invocation)" do
   Spec.assert "new Date" do
     d = JS.global[:Date].new(2026, 4, 8) # JS month is 0-indexed: 4 = May
     Spec.assert_equal 2026, d.getFullYear.to_i
@@ -29,8 +29,8 @@ Spec.describe "JSBridge::Value#new (constructor invocation)" do
     Spec.assert_equal "oops", err[:message].to_s
   end
 
-  Spec.assert "new on non-function raises JSBridge::Error" do
-    Spec.assert_raises(JSBridge::Error) do
+  Spec.assert "new on non-function raises JS::Error" do
+    Spec.assert_raises(JS::Error) do
       JS.eval("42").new
     end
   end

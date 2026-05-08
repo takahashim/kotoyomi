@@ -2,7 +2,7 @@
 # assert_raises in the mruby-test idiom, but lightweight (no rake-test
 # integration). Each test file calls Spec.describe / Spec.assert; the
 # Node runner triggers Spec.summary at the end which prints a per-group
-# table and exposes pass/fail to JS via JSBridge.global[:__test_failed__].
+# table and exposes pass/fail to JS via JS.global[:__test_failed__].
 
 module Spec
   @groups = []
@@ -83,7 +83,7 @@ module Spec
       end
       puts ""
       puts "#{@counts[:tests] - @counts[:failures]}/#{@counts[:tests]} tests pass (#{@counts[:asserts]} assertions)"
-      JSBridge.global[:__test_failed__] = @counts[:failures] > 0
+      JS.global[:__test_failed__] = @counts[:failures] > 0
     end
 
     private

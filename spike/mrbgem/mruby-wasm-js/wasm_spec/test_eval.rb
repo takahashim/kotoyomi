@@ -1,27 +1,27 @@
-JS = JSBridge
 
-Spec.describe "JSBridge.eval / global / property access" do
-  Spec.assert "eval returns Value with int" do
+
+Spec.describe "JS.eval / global / property access" do
+  Spec.assert "eval returns JS::Object with int" do
     Spec.assert_equal 42, JS.eval("42").to_i
   end
 
-  Spec.assert "eval returns Value with string" do
+  Spec.assert "eval returns JS::Object with string" do
     Spec.assert_equal "hi", JS.eval("'hi'").to_s
   end
 
-  Spec.assert "eval returns Value with float" do
+  Spec.assert "eval returns JS::Object with float" do
     Spec.assert_equal 3.14, JS.eval("3.14").to_f
   end
 
-  Spec.assert "eval returns Value with null" do
+  Spec.assert "eval returns JS::Object with null" do
     Spec.assert_true JS.eval("null").nil?
   end
 
-  Spec.assert "eval returns Value with undefined" do
+  Spec.assert "eval returns JS::Object with undefined" do
     Spec.assert_true JS.eval("undefined").nil?
   end
 
-  Spec.assert "JSBridge.global is the JS globalThis" do
+  Spec.assert "JS.global is the JS globalThis" do
     g = JS.global
     Spec.assert_false g.nil?
     Spec.assert_equal "object", g.typeof

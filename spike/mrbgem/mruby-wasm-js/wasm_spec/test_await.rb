@@ -1,6 +1,6 @@
-JS = JSBridge
 
-Spec.describe "Value#await (Fiber-based)" do
+
+Spec.describe "JS::Object#await (Fiber-based)" do
   Spec.assert "await on Promise.resolve" do
     Spec.assert_equal 42, JS.global[:Promise].resolve(42).await.to_i
   end
@@ -11,8 +11,8 @@ Spec.describe "Value#await (Fiber-based)" do
     Spec.assert_equal 30, a.to_i + b.to_i
   end
 
-  Spec.assert "await rejected → JSBridge::Error" do
-    Spec.assert_raises(JSBridge::Error) do
+  Spec.assert "await rejected → JS::Error" do
+    Spec.assert_raises(JS::Error) do
       JS.global[:Promise].reject(JS.global[:Error].new("rej")).await
     end
   end

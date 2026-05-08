@@ -1,4 +1,4 @@
-JS = JSBridge
+
 
 Spec.describe "iteration: to_a / each / to_proc / length / size" do
   Spec.assert "length returns Ruby Integer" do
@@ -9,7 +9,7 @@ Spec.describe "iteration: to_a / each / to_proc / length / size" do
     Spec.assert_equal 4, JS.eval("[10,20,30,40]").size
   end
 
-  Spec.assert "to_a returns Ruby Array of Values" do
+  Spec.assert "to_a returns Ruby Array of JS::Objects" do
     arr = JS.eval('["a", "b", "c"]').to_a
     Spec.assert_equal Array, arr.class
     Spec.assert_equal 3, arr.length

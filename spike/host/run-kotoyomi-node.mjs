@@ -80,7 +80,7 @@ globalThis.fetch = async (url) => {
 const vm = await createVM({ wasm: new URL("./mruby-js.wasm", import.meta.url).href });
 
 // Load the canonical kotoyomi lib from the repo root. Since Phase 2e
-// migrated lib/ to mruby + JSBridge, the same files run here under Node
+// migrated lib/ to mruby + JS, the same files run here under Node
 // against the gem (with a fake DOM/Audio shim above).
 const APP = ["lib/dom.rb", "lib/renderer.rb", "lib/player.rb", "lib/kotoyomi.rb"];
 for (const rel of APP) {

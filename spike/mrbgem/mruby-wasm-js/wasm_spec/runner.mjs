@@ -1,6 +1,6 @@
 // Test runner for mruby-wasm-js. Builds a fresh VM, loads
 // spec_helper.rb + each test_*.rb via vm.eval, then runs Spec.summary
-// which sets JSBridge.global[:__test_failed__].
+// which sets JS.global[:__test_failed__].
 //
 // Exit code 0 if all tests pass, 1 otherwise.
 // Run with: `node mrbgem/mruby-wasm-js/wasm_spec/runner.mjs`

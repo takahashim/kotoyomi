@@ -1,7 +1,7 @@
-JS = JSBridge
 
-Spec.describe "JSBridge::Value#call / #apply / method_missing" do
-  Spec.assert "call returns a Value" do
+
+Spec.describe "JS::Object#call / #apply / method_missing" do
+  Spec.assert "call returns a JS::Object" do
     arr = JS.eval("[1, 2, 3]")
     result = arr.call(:concat, JS.eval("[4, 5]"))
     Spec.assert_equal 5, result.length
