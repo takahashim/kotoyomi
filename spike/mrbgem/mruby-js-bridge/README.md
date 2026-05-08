@@ -216,6 +216,25 @@ Expected: `167/167 tests pass (235 assertions)`. Exit code 0 on success,
 
 Tested against **mruby 4.0.0**.
 
+## WASI runtime compatibility
+
+The wasm built by this gem (and the sibling `mruby-wasm-cli`) uses
+clang's SJLJ implementation, which lowers `setjmp`/`longjmp` to the
+WebAssembly Exception Handling proposal. Runtime support varies:
+
+| Runtime | Supports our wasm? | Notes |
+|---|---|---|
+| **Node.js (`node:wasi`)** | ✓ | V8 has full EH support |
+| Browser (Chrome / Safari / Firefox) | ✓ | V8 / JSC / SpiderMonkey all have EH |
+| **Bun** (WASI) | ✓ (expected) | JSC-based |
+| Cloudflare Workers / V8-based edge | ✓ (expected) | V8-based |
+| **wasmtime ≥36** | ✗ | Cranelift backend doesn't yet implement the `Throw` instruction; even with `-W exceptions=y`. Tracking: upstream wasmtime |
+| **wasmer 7.x** | ✗ | EH proposal not yet implemented |
+
+For CLI / non-browser use today, **`node:wasi` is the recommended
+host**. The CLI build (`make cli-link` → `host/mruby-cli.wasm`) ships
+`host/run-cli-node.mjs` which drives it via Node's built-in WASI.
+
 ## Related projects
 
 This gem ships the **JS-host build** of upstream mruby on WebAssembly.

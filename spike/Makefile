@@ -42,7 +42,7 @@ SYSROOT := $(WASI_SDK_DIR)/share/wasi-sysroot
 TARGET := wasm32-wasip1
 
 .PHONY: all download wasi-sdk mruby link serve test dist clean distclean \
-        mruby-cli cli-link smoke-cli dist-cli
+        mruby-cli cli-link smoke-cli dist-cli dist-all smoke-all
 
 all: link
 
@@ -209,17 +209,25 @@ dist-cli: cli-link
 	  '## Usage' \
 	  '' \
 	  '```bash' \
-	  '# Node has built-in WASI (always available, accepts our bytecode):' \
+	  '# Node has built-in WASI (always available, V8 has full EH support):' \
 	  'node --experimental-wasi-unstable-preview1 run-cli-node.mjs script.rb' \
-	  '' \
-	  '# wasmtime ≥36 currently cannot load this build because clang emits' \
-	  '# legacy exception bytecode (for SJLJ) that wasmtime dropped.' \
-	  '# Tracking issue: see toolchain notes in the gem README.' \
 	  '```' \
 	  '' \
 	  '`mruby.wasm` is `mruby-bin-mruby` compiled to wasm32-wasip1, so it' \
 	  'accepts the same CLI surface as native `mruby`: pass a script path' \
 	  'as argv, or pipe Ruby source on stdin.' \
+	  '' \
+	  '## Runtime compatibility' \
+	  '' \
+	  'clang lowers setjmp/longjmp (which mruby uses for exceptions and' \
+	  'GC mark scan) to the WebAssembly Exception Handling proposal.' \
+	  'Currently only V8-based runtimes implement the proposal:' \
+	  '' \
+	  '- ✓ Node.js (`node:wasi`), browsers, Bun, Cloudflare Workers' \
+	  '- ✗ wasmtime ≥36 (Cranelift backend lacks `Throw`)' \
+	  '- ✗ wasmer 7.x (EH proposal not yet implemented)' \
+	  '' \
+	  'Use `node:wasi` for now. wasmtime/wasmer support is upstream-blocked.' \
 	  '' \
 	  '## What is included' \
 	  '' \
@@ -251,6 +259,22 @@ dist-cli: cli-link
 	@echo "Try it (Node has built-in WASI; wasmtime ≥36 currently can't load"
 	@echo "the legacy SJLJ exception bytecode clang emits — use Node for now):"
 	@echo "  node --experimental-wasi-unstable-preview1 host/run-cli-node.mjs path/to/script.rb"
+
+# `make smoke-all` — exercise both build variants end-to-end:
+#   1. wasm_spec under the JS-host wasm
+#   2. CLI wasm via node:wasi
+# Used as a single `make smoke-all` gate before tagging a release.
+smoke-all: test smoke-cli
+	@echo ""
+	@echo "[smoke-all] all checks passed"
+
+# `make dist-all` — build both packages in one go (JS-host + CLI).
+# Useful for CI / release artifact generation.
+dist-all: dist dist-cli
+	@echo ""
+	@echo "Built both distributions:"
+	@echo "  dist/mruby-js-bridge/  — JS-host build (browser/Node createVM API)"
+	@echo "  dist/mruby-wasm-cli/   — CLI build (run via node:wasi or other V8-based hosts)"
 
 clean:
 	rm -rf $(MRUBY_DIR)/build/wasi-js $(MRUBY_DIR)/build/wasi-cli
