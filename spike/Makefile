@@ -16,6 +16,10 @@ WASI_SDK_OK := $(CURDIR)/vendor/.wasi-sdk-ok
 export WASI_SDK_PATH := $(WASI_SDK_DIR)
 
 MRUBY_DIR := $(CURDIR)/mruby
+MRUBY_REPO := https://github.com/mruby/mruby.git
+# Pinned tag of upstream mruby. Bump intentionally — mruby HEAD has had
+# incompatible changes (e.g. mruby-regexp's String#split breakage).
+MRUBY_TAG := 4.0.0
 # Build config lives outside the mruby clone (which is gitignored) so we
 # don't have to track files in someone else's source tree.
 MRUBY_CONFIG := $(CURDIR)/build_config/wasi.rb
@@ -56,7 +60,14 @@ $(WASI_SDK_OK): $(WASI_SDK_TAR)
 	touch $(WASI_SDK_OK)
 	@echo "wasi-sdk ready at $(WASI_SDK_DIR)"
 
-mruby: wasi-sdk $(LIBMRUBY)
+mruby: wasi-sdk $(MRUBY_DIR)/.git $(LIBMRUBY)
+
+# Shallow-clone mruby pinned to MRUBY_TAG. Skipped if the directory
+# already exists (so a developer who manually checked out a different
+# rev won't be silently overwritten).
+$(MRUBY_DIR)/.git:
+	@echo "cloning mruby $(MRUBY_TAG) into $(MRUBY_DIR)..."
+	git clone --depth 1 --branch $(MRUBY_TAG) $(MRUBY_REPO) $(MRUBY_DIR)
 
 $(LIBMRUBY):
 	cd $(MRUBY_DIR) && rake MRUBY_CONFIG=$(MRUBY_CONFIG)

@@ -360,7 +360,10 @@ const wasiImports = {
     view.setUint32(c, 0, true); view.setUint32(s, 0, true); return 0;
   },
   args_get() { return 0; },
-  // Additional WASI imports pulled in by mruby-io. Return errors for unused paths.
+  // Additional WASI imports pulled in by mruby-io / hal-posix-io. We
+  // never exercise these paths in kotoyomi; return ENOSYS (28) so any
+  // accidental call fails loudly. New ones added in mruby 4.0.0's HAL
+  // refactor are grouped at the bottom.
   fd_fdstat_set_flags(_fd, _flags) { return 28; },
   fd_filestat_get(_fd, _ptr) { return 28; },
   fd_prestat_get(_fd, _ptr) { return 8; },
@@ -368,24 +371,60 @@ const wasiImports = {
   fd_read(_fd, _iovs, _iovsLen, _nreadPtr) { return 28; },
   fd_tell(_fd, _ptr) { return 28; },
   path_open() { return 28; },
+  // Added by hal-posix-io (mruby 4.0.0)
+  fd_filestat_set_size(_fd, _size) { return 28; },
+  fd_filestat_set_times(_fd, _atim, _mtim, _flags) { return 28; },
+  fd_pread(_fd, _iovs, _iovsLen, _offset, _nreadPtr) { return 28; },
+  fd_pwrite(_fd, _iovs, _iovsLen, _offset, _nwrittenPtr) { return 28; },
+  fd_readdir(_fd, _buf, _bufLen, _cookie, _bufused) { return 28; },
+  fd_renumber(_from, _to) { return 28; },
+  fd_sync(_fd) { return 28; },
+  fd_advise(_fd, _offset, _len, _advice) { return 28; },
+  fd_allocate(_fd, _offset, _len) { return 28; },
+  fd_datasync(_fd) { return 28; },
+  path_create_directory(_fd, _path, _pathLen) { return 28; },
+  path_filestat_get(_fd, _flags, _path, _pathLen, _ptr) { return 28; },
+  path_filestat_set_times() { return 28; },
+  path_link() { return 28; },
+  path_readlink() { return 28; },
+  path_remove_directory() { return 28; },
+  path_rename() { return 28; },
+  path_symlink() { return 28; },
+  path_unlink_file() { return 28; },
+  poll_oneoff() { return 28; },
+  random_get() { return 28; },
+  sched_yield() { return 0; },
+  clock_time_get(_id, _precision, ptr) {
+    // mruby-time references this; return zeros so calls don't throw.
+    const view = new DataView(instance.exports.memory.buffer);
+    view.setBigUint64(ptr, 0n, true);
+    return 0;
+  },
+  clock_res_get(_id, ptr) {
+    const view = new DataView(instance.exports.memory.buffer);
+    view.setBigUint64(ptr, 0n, true);
+    return 0;
+  },
 };
 
 // --- env: SJLJ helpers (resolved by libsetjmp.a, kept empty as fallback) ----
 const envImports = {};
 
-// Stub out POSIX / mruby-io HAL symbols that mruby-io references but the
-// spike never calls (no File.open / Process.spawn / IO.popen etc.).
+// Stub out POSIX functions that mruby-io / hal-posix-io reference but
+// wasi-libc doesn't ship. With mruby 4.0.0, the HAL was extracted to
+// `hal-posix-io` (which gets linked into the wasm), and that gem's
+// io_hal.c calls real POSIX APIs — many of which wasi-libc lacks. The
+// kotoyomi spike never exercises File.open / Process.spawn / IO.popen
+// etc. so all of these can safely be no-ops.
 const ioStubNames = [
-  "dup", "waitpid",
-  "mrb_hal_io_init", "mrb_hal_io_pipe", "mrb_hal_io_close",
-  "mrb_hal_io_spawn_process", "mrb_hal_io_fdset_alloc", "mrb_hal_io_fdset_zero",
-  "mrb_hal_io_fdset_set", "mrb_hal_io_select", "mrb_hal_io_fdset_free",
-  "mrb_hal_io_fdset_isset", "mrb_hal_io_umask", "mrb_hal_io_unlink",
-  "mrb_hal_io_rename", "mrb_hal_io_symlink", "mrb_hal_io_chmod",
-  "mrb_hal_io_readlink", "mrb_hal_io_realpath", "mrb_hal_io_getcwd",
-  "mrb_hal_io_gethome", "mrb_hal_io_flock", "mrb_hal_io_fstat",
-  "mrb_hal_io_ftruncate", "mrb_hal_io_lstat", "mrb_hal_io_stat",
-  "mrb_hal_io_final",
+  // process control — none of these have a meaningful WASI counterpart
+  "dup", "dup2", "waitpid", "pipe", "fork", "execl",
+  // file mode / permission
+  "umask",
+  // file locking (POSIX flock; WASI uses path_lock in capabilities-style)
+  "flock",
+  // passwd database (hal-posix-io's gethome lookup)
+  "getpwnam",
 ];
 for (const name of ioStubNames) {
   envImports[name] = (..._args) => -1;
