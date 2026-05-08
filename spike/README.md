@@ -24,7 +24,7 @@ spike/
 ├── .gitignore              # mruby/, vendor/, host/mruby-js.wasm を除外
 ├── build_config/
 │   ├── wasi-js.rb          # JS-host build (mruby + mruby-wasm-js + WASI mgems)
-│   └── wasi-cli.rb         # CLI build (mruby + mruby-bin-mruby + WASI mgems, no JS bridge)
+│   └── wasi-cmd.rb         # command build (mruby + mruby-bin-mruby + WASI mgems, no JS bridge)
 ├── mruby/                  # gitignored、`make mruby` で git clone される
 ├── mrbgem/
 │   └── mruby-wasm-js/    # ── 再配布可能な gem 本体 (詳細は gem の README) ──

@@ -29,20 +29,20 @@ MAIN_C := $(CURDIR)/main/main.c
 HOST_DIR := $(CURDIR)/host
 HOST_WASM := $(HOST_DIR)/mruby-js.wasm
 
-# CLI / wasmtime variant — same gem set minus mruby-wasm-js, plus
-# mruby-bin-mruby for a standard `mruby` CLI entry. See
-# build_config/wasi-cli.rb for rationale.
-MRUBY_CONFIG_CLI := $(CURDIR)/build_config/wasi-cli.rb
-LIBMRUBY_CLI := $(MRUBY_DIR)/build/wasi-cli/lib/libmruby.a
-HOST_WASM_CLI := $(HOST_DIR)/mruby-cli.wasm
-DIST_DIR_CLI := $(CURDIR)/dist/mruby-wasm-cli
+# Command / wasmtime variant — same gem set minus mruby-wasm-js, plus
+# mruby-bin-mruby for a standard WASI command entry. See
+# build_config/wasi-cmd.rb for rationale.
+MRUBY_CONFIG_CMD := $(CURDIR)/build_config/wasi-cmd.rb
+LIBMRUBY_CMD := $(MRUBY_DIR)/build/wasi-cmd/lib/libmruby.a
+HOST_WASM_CMD := $(HOST_DIR)/mruby-cmd.wasm
+DIST_DIR_CMD := $(CURDIR)/dist/mruby-wasm-cmd
 
 CLANG := $(WASI_SDK_DIR)/bin/clang
 SYSROOT := $(WASI_SDK_DIR)/share/wasi-sysroot
 TARGET := wasm32-wasip1
 
 .PHONY: all download wasi-sdk mruby link serve test dist clean distclean \
-        mruby-cli cli-link smoke-cli smoke-cli-wasmtime dist-cli dist-all smoke-all
+        mruby-cmd cmd-link smoke-cmd smoke-cmd-wasmtime dist-cmd dist-all smoke-all
 
 all: link
 
@@ -163,73 +163,73 @@ dist: link
 	@echo "    const vm = await createVM({ wasm: new URL('./vendor/mruby-wasm-js/mruby-js.wasm', import.meta.url).href })"
 
 # ---------------------------------------------------------------------------
-# `make cli-link` — build the CLI / wasmtime variant (mruby-bin-mruby
-# entry point, no JS bridge). Produces host/mruby-cli.wasm which can run
+# `make cmd-link` — build the command / wasmtime variant (mruby-bin-mruby
+# entry point, no JS bridge). Produces host/mruby-cmd.wasm which can run
 # on wasmtime, wasmer, or any other preview1-compatible host.
 # ---------------------------------------------------------------------------
 
-mruby-cli: wasi-sdk $(MRUBY_DIR)/.git $(LIBMRUBY_CLI)
+mruby-cmd: wasi-sdk $(MRUBY_DIR)/.git $(LIBMRUBY_CMD)
 
-$(LIBMRUBY_CLI):
-	cd $(MRUBY_DIR) && rake MRUBY_CONFIG=$(MRUBY_CONFIG_CLI)
+$(LIBMRUBY_CMD):
+	cd $(MRUBY_DIR) && rake MRUBY_CONFIG=$(MRUBY_CONFIG_CMD)
 
-cli-link: mruby-cli $(HOST_WASM_CLI)
+cmd-link: mruby-cmd $(HOST_WASM_CMD)
 
 # mruby-bin-mruby's CrossBuild output is bin/mruby (a wasm file in our
 # wasm32-wasip1 target). Copy it under a .wasm extension for clarity.
-$(HOST_WASM_CLI): $(LIBMRUBY_CLI) | $(HOST_DIR)
-	cp $(MRUBY_DIR)/build/wasi-cli/bin/mruby $(HOST_WASM_CLI)
-	@echo "Built $(HOST_WASM_CLI)"
+$(HOST_WASM_CMD): $(LIBMRUBY_CMD) | $(HOST_DIR)
+	cp $(MRUBY_DIR)/build/wasi-cmd/bin/mruby $(HOST_WASM_CMD)
+	@echo "Built $(HOST_WASM_CMD)"
 
-# `make smoke-cli` — sanity check that the CLI wasm boots and Ruby
+# `make smoke-cmd` — sanity check that the command wasm boots and Ruby
 # basics (puts / Time / ENV / File / Dir / rand) work. Driven via Node's
 # built-in WASI module since wasmtime ≥36 dropped support for the
 # legacy exception bytecode that clang's SJLJ implementation emits
 # (see notes/known-issues in the gem README). Node's WASI accepts
 # this bytecode and is always available because the JS-host workflow
 # already requires Node.
-smoke-cli: cli-link
+smoke-cmd: cmd-link
 	@node --experimental-wasi-unstable-preview1 --experimental-wasm-exnref \
-	    host/run-cli-node.mjs 2>&1 \
+	    host/run-cmd-node.mjs 2>&1 \
 	  | grep -v ExperimentalWarning | grep -v "Use \`node"
 
-# `make smoke-cli-wasmtime` — alternative smoke using `wasmtime` directly
+# `make smoke-cmd-wasmtime` — alternative smoke using `wasmtime` directly
 # (≥37 required for the modern EH proposal `try_table` instructions
 # clang now emits via `-mllvm -wasm-use-legacy-eh=false`). Skips
 # gracefully if wasmtime isn't installed.
-smoke-cli-wasmtime: cli-link
+smoke-cmd-wasmtime: cmd-link
 	@if command -v wasmtime >/dev/null 2>&1; then \
 	  WT_VERSION=$$(wasmtime --version | awk '{print $$2}'); \
 	  WT_MAJOR=$${WT_VERSION%%.*}; \
 	  if [ "$$WT_MAJOR" -lt 37 ]; then \
-	    echo "[smoke-cli-wasmtime] wasmtime $$WT_VERSION found, but ≥37 required for modern EH support."; \
-	    echo "[smoke-cli-wasmtime] (current binary at $$(command -v wasmtime) — upgrade or skip)"; \
+	    echo "[smoke-cmd-wasmtime] wasmtime $$WT_VERSION found, but ≥37 required for modern EH support."; \
+	    echo "[smoke-cmd-wasmtime] (current binary at $$(command -v wasmtime) — upgrade or skip)"; \
 	    exit 0; \
 	  fi; \
-	  echo "[smoke-cli-wasmtime] running selftest via wasmtime $$WT_VERSION..."; \
+	  echo "[smoke-cmd-wasmtime] running selftest via wasmtime $$WT_VERSION..."; \
 	  TMPDIR=$$(mktemp -d); \
-	  printf 'puts "[smoke-wt] hello from mruby-cli.wasm via wasmtime"\n\
+	  printf 'puts "[smoke-wt] hello from mruby-cmd.wasm via wasmtime"\n\
 puts "[smoke-wt] Time.now=#{Time.now}"\n\
 puts "[smoke-wt] ENV[SMOKE_WT]=#{ENV[\"SMOKE_WT\"]}"\n\
 File.open("'$$TMPDIR'/out.txt", "w") { |f| f.write("inside-wasm\\n") }\n\
 puts "[smoke-wt] File.read=#{File.read(\"'$$TMPDIR'/out.txt\").strip}"\n\
 puts "[smoke-wt] OK"\n' > $$TMPDIR/selftest.rb; \
-	  wasmtime -W exceptions=y --env SMOKE_WT=yes --dir=$$TMPDIR $(HOST_WASM_CLI) $$TMPDIR/selftest.rb; \
+	  wasmtime -W exceptions=y --env SMOKE_WT=yes --dir=$$TMPDIR $(HOST_WASM_CMD) $$TMPDIR/selftest.rb; \
 	  rm -rf $$TMPDIR; \
 	else \
-	  echo "[smoke-cli-wasmtime] wasmtime not found — skipping. Install via:"; \
+	  echo "[smoke-cmd-wasmtime] wasmtime not found — skipping. Install via:"; \
 	  echo "  curl https://wasmtime.dev/install.sh -sSf | bash"; \
 	fi
 
-dist-cli: cli-link
-	@rm -rf $(DIST_DIR_CLI)
-	@mkdir -p $(DIST_DIR_CLI)
-	cp $(HOST_WASM_CLI) $(DIST_DIR_CLI)/mruby-cli.wasm
-	cp $(GEM_DIR)/LICENSE $(DIST_DIR_CLI)/LICENSE
+dist-cmd: cmd-link
+	@rm -rf $(DIST_DIR_CMD)
+	@mkdir -p $(DIST_DIR_CMD)
+	cp $(HOST_WASM_CMD) $(DIST_DIR_CMD)/mruby-cmd.wasm
+	cp $(GEM_DIR)/LICENSE $(DIST_DIR_CMD)/LICENSE
 	@printf '%s\n' \
-	  '# mruby-wasm-cli' \
+	  '# mruby-wasm-cmd' \
 	  '' \
-	  'CLI / wasmtime build of upstream mruby compiled to `wasm32-wasip1`.' \
+	  'Command / wasmtime build of upstream mruby compiled to `wasm32-wasip1`.' \
 	  'Sibling distribution to `mruby-wasm-js` — same upstream mruby and' \
 	  'the same `mruby-wasi-dir` / `mruby-wasi-env` mgems, but **without** the' \
 	  'JS bridge. Runs on any preview1-compatible WASI host (wasmtime,' \
@@ -239,14 +239,14 @@ dist-cli: cli-link
 	  '' \
 	  '```bash' \
 	  '# wasmtime ≥37 (modern Wasm EH proposal landed in Cranelift):' \
-	  'wasmtime -W exceptions=y --dir=. mruby-cli.wasm script.rb' \
+	  'wasmtime -W exceptions=y --dir=. mruby-cmd.wasm script.rb' \
 	  '' \
 	  '# Node.js — needs --experimental-wasm-exnref for modern EH:' \
 	  'node --experimental-wasi-unstable-preview1 --experimental-wasm-exnref \\' \
-	  '    run-cli-node.mjs script.rb' \
+	  '    run-cmd-node.mjs script.rb' \
 	  '```' \
 	  '' \
-	  '`mruby-cli.wasm` is `mruby-bin-mruby` compiled to wasm32-wasip1, so it' \
+	  '`mruby-cmd.wasm` is `mruby-bin-mruby` compiled to wasm32-wasip1, so it' \
 	  'accepts the same CLI surface as native `mruby`: pass a script path' \
 	  'as argv, or pipe Ruby source on stdin.' \
 	  '' \
@@ -284,38 +284,38 @@ dist-cli: cli-link
 	  '  runtimes / `no_std` embedding. Smaller binary, subset of mruby' \
 	  '  behaviour. Bytecode produced by upstream `mrbc` runs on both' \
 	  '  this distribution and `mruby/edge`.' \
-	  > $(DIST_DIR_CLI)/README.md
+	  > $(DIST_DIR_CMD)/README.md
 	@echo ""
-	@echo "Built dist/mruby-wasm-cli/ (version $(DIST_VERSION)):"
-	@ls -lh $(DIST_DIR_CLI)
+	@echo "Built dist/mruby-wasm-cmd/ (version $(DIST_VERSION)):"
+	@ls -lh $(DIST_DIR_CMD)
 	@echo ""
 	@echo "Try it on wasmtime ≥37:"
-	@echo "  wasmtime -W exceptions=y --dir=. dist/mruby-wasm-cli/mruby-cli.wasm script.rb"
+	@echo "  wasmtime -W exceptions=y --dir=. dist/mruby-wasm-cmd/mruby-cmd.wasm script.rb"
 	@echo ""
 	@echo "Or via Node (needs --experimental-wasm-exnref for modern EH):"
 	@echo "  node --experimental-wasi-unstable-preview1 --experimental-wasm-exnref \\"
-	@echo "      host/run-cli-node.mjs path/to/script.rb"
+	@echo "      host/run-cmd-node.mjs path/to/script.rb"
 
 # `make smoke-all` — exercise both build variants end-to-end:
 #   1. wasm_spec under the JS-host wasm
-#   2. CLI wasm via node:wasi
-#   3. CLI wasm via wasmtime (skipped gracefully if not installed)
+#   2. command wasm via node:wasi
+#   3. command wasm via wasmtime (skipped gracefully if not installed)
 # Used as a single `make smoke-all` gate before tagging a release.
-smoke-all: test smoke-cli smoke-cli-wasmtime
+smoke-all: test smoke-cmd smoke-cmd-wasmtime
 	@echo ""
 	@echo "[smoke-all] all checks passed"
 
-# `make dist-all` — build both packages in one go (JS-host + CLI).
+# `make dist-all` — build both packages in one go (JS-host + command).
 # Useful for CI / release artifact generation.
-dist-all: dist dist-cli
+dist-all: dist dist-cmd
 	@echo ""
 	@echo "Built both distributions:"
 	@echo "  dist/mruby-wasm-js/  — JS-host build (browser/Node createVM API)"
-	@echo "  dist/mruby-wasm-cli/   — CLI build (run via node:wasi or other V8-based hosts)"
+	@echo "  dist/mruby-wasm-cmd/   — command-form build (runs on wasmtime, node:wasi or other V8-based hosts)"
 
 clean:
-	rm -rf $(MRUBY_DIR)/build/wasi-js $(MRUBY_DIR)/build/wasi-cli
-	rm -f $(HOST_WASM) $(HOST_WASM_CLI)
+	rm -rf $(MRUBY_DIR)/build/wasi-js $(MRUBY_DIR)/build/wasi-cmd
+	rm -f $(HOST_WASM) $(HOST_WASM_CMD)
 	rm -rf $(CURDIR)/dist
 
 distclean: clean

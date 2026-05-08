@@ -1,13 +1,13 @@
-# mruby cross-build for WASI (wasm32-wasip1) — CLI / wasmtime variant.
+# mruby cross-build for WASI (wasm32-wasip1) — command / wasmtime variant.
 #
 # Same toolchain + most gems as build_config/wasi.rb, but:
 #   - NO mruby-wasm-js (this build is meant to run on wasmtime / wasi-libc
 #     hosts that don't provide the js_bridge.* imports)
 #   - NO mruby-method (only needed for JSBridge::Value#method_missing)
-#   - INCLUDES mruby-bin-mruby, which produces a `bin/mruby` CLI wasm that
+#   - INCLUDES mruby-bin-mruby, which produces a `bin/mruby` command wasm that
 #     reads a Ruby script from argv (or stdin if no arg) and executes it
 #
-# Output: $(mruby)/build/wasi-cli/bin/mruby — a wasm32-wasip1 module that
+# Output: $(mruby)/build/wasi-cmd/bin/mruby — a wasm32-wasip1 module that
 # can be run as `wasmtime --dir=. mruby script.rb`.
 #
 # Sibling to wasi.rb which is for the JS-host build (browser/Node via the
@@ -19,7 +19,7 @@ clang = "#{wasi_sdk}/bin/clang"
 ar = "#{wasi_sdk}/bin/llvm-ar"
 target = "wasm32-wasip1"
 
-MRuby::CrossBuild.new("wasi-cli") do |conf|
+MRuby::CrossBuild.new("wasi-cmd") do |conf|
   conf.toolchain :clang
 
   conf.cc.command = clang
@@ -31,7 +31,7 @@ MRuby::CrossBuild.new("wasi-cli") do |conf|
   # `-wasm-use-legacy-eh=false` switches clang's SJLJ lowering to the
   # modern Wasm Exception Handling proposal (`try_table`) instead of
   # the legacy `try`/`catch` instructions. wasmtime ≥36 only supports
-  # the modern form, so this flag is required for the CLI build to
+  # the modern form, so this flag is required for the command build to
   # parse on those versions.
   sjlj_flags = ["-mllvm", "-wasm-enable-sjlj",
                 "-mllvm", "-wasm-use-legacy-eh=false"]
@@ -48,7 +48,7 @@ MRuby::CrossBuild.new("wasi-cli") do |conf|
 
   conf.gembox "default-no-stdio"
 
-  # Runtime parser (for `mrb_load_string` from the CLI's eval path)
+  # Runtime parser (for `mrb_load_string` from the command's eval path)
   conf.gem core: "mruby-compiler"
 
   # WASI HAL for mruby-io. Loaded BEFORE mruby-io so the latter's HAL
@@ -70,7 +70,7 @@ MRuby::CrossBuild.new("wasi-cli") do |conf|
   conf.gem File.expand_path("../mrbgem/mruby-wasi-dir", __dir__)
   conf.gem File.expand_path("../mrbgem/mruby-wasi-env", __dir__)
 
-  # CLI entry point: produces `bin/mruby` that takes argv[1] = script path
+  # Command entry point: produces `bin/mruby` that takes argv[1] = script path
   # (or reads stdin if no script given) and executes it. Same UX as the
   # native `mruby` binary.
   conf.gem core: "mruby-bin-mruby"

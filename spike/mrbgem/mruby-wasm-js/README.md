@@ -234,11 +234,11 @@ This gem ships two wasm artefacts with different EH choices:
 | Build | EH form | Why |
 |---|---|---|
 | **JS-host** (`mruby-js.wasm`) | Legacy | Maximum browser compatibility — works on V8/JSC/SpiderMonkey going back several years without flags. |
-| **CLI** (`mruby-cli.wasm`) | Modern | Required for wasmtime ≥37 (Cranelift only implements modern EH). |
+| **command** (`mruby-cmd.wasm`) | Modern | Required for wasmtime ≥37 (Cranelift only implements modern EH). |
 
 Tested runtime support:
 
-| Runtime | JS-host build | CLI build |
+| Runtime | JS-host build | command build |
 |---|---|---|
 | **Browser** (Chrome 137+ / Firefox 131+ / Safari 18.4+) | ✓ default | ✓ default |
 | **Node.js** (24+) | ✓ default (browser-style `WebAssembly.compile`) | ✓ with `--experimental-wasm-exnref` |
@@ -249,15 +249,15 @@ Tested runtime support:
 | **wasmer 7.x** | n/a | ✗ EH proposal not yet implemented |
 | **wazero** | n/a | ✗ EH proposal not yet implemented |
 
-Run the CLI build:
+Run the command build:
 
 ```bash
 # wasmtime ≥37
-wasmtime -W exceptions=y --dir=. host/mruby-cli.wasm script.rb
+wasmtime -W exceptions=y --dir=. host/mruby-cmd.wasm script.rb
 
 # Node.js — needs --experimental-wasm-exnref for the exnref reference type
 node --experimental-wasi-unstable-preview1 --experimental-wasm-exnref \
-    host/run-cli-node.mjs script.rb
+    host/run-cmd-node.mjs script.rb
 ```
 
 (The JS-host build runs in any modern V8/JSC/SpiderMonkey browser
@@ -266,10 +266,10 @@ without flags. See `host/phase2c.html` and the kotoyomi sample.)
 ## Related projects
 
 This gem ships the **JS-host build** of upstream mruby on WebAssembly.
-A sibling **CLI / wasmtime build** (same upstream mruby, no JS bridge)
-lives under `spike/dist/mruby-wasm-cli/` — useful for sandboxing and
+A sibling **command / wasmtime build** (same upstream mruby, no JS bridge)
+lives under `spike/dist/mruby-wasm-cmd/` — useful for sandboxing and
 running mruby scripts from `wasmtime` / `node:wasi` / other preview1
-hosts. Build it via `make cli-link` from the spike root.
+hosts. Build it via `make cmd-link` from the spike root.
 
 If you're doing mruby on WASM more broadly, see also:
 

@@ -1,6 +1,6 @@
 # mruby cross-build for WASI (wasm32-wasip1) — JS-host variant.
 #
-# Sibling to build_config/wasi-cli.rb (CLI / wasmtime variant). This
+# Sibling to build_config/wasi-cmd.rb (command / wasmtime variant). This
 # config is the JS-host build: includes mruby-wasm-js so the wasm
 # carries the js_bridge.* primitive imports that the gem's JS adapter
 # (mrbgem/mruby-wasm-js/js/index.js — `createVM` factory) satisfies.
@@ -76,7 +76,7 @@ MRuby::CrossBuild.new("wasi-js") do |conf|
   # mruby-io's main io.c directly calls a couple of POSIX functions
   # (dup, waitpid) not routed through the HAL. mruby-wasi-stubs supplies
   # ENOSYS-returning symbol stubs for those so the wasm links cleanly.
-  # Shared with the CLI build.
+  # Shared with the command build.
   conf.gem File.expand_path("../mrbgem/mruby-wasi-stubs", __dir__)
 
   # mruby-method enables Object#method_missing dispatch (used by

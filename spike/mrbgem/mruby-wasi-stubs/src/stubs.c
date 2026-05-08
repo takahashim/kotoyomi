@@ -14,7 +14,7 @@
  * the linker; mruby-io's IO#dup and popen flows raise SystemCallError
  * at runtime instead of crashing the wasm at instantiation.
  *
- * Used by both wasi.rb (JS-host build) and wasi-cli.rb (CLI build)
+ * Used by both wasi-js.rb (JS-host build) and wasi-cmd.rb (command build)
  * because both link against mruby-io.
  *
  * Types (pid_t etc.) come from spike/stubs/wasi-shims.h, force-included
