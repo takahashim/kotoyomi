@@ -144,6 +144,45 @@ function writeToOpenFile(f, view, memory, iovsPtr, iovsLen) {
   return total;
 }
 
+// fd_read helper: drain bytes from the JS-side stdin buffer into the
+// guest's iovec slots. Returns 0 (EOF) when the buffer is empty —
+// matching POSIX read() semantics for an exhausted pipe.
+function readFromStdin(view, memory, iovsPtr, iovsLen) {
+  let total = 0;
+  for (let i = 0; i < iovsLen; i++) {
+    const ptr = view.getUint32(iovsPtr + i * 8, true);
+    const len = view.getUint32(iovsPtr + i * 8 + 4, true);
+    const remaining = stdin.bytes.length;
+    if (remaining <= 0) break;
+    const n = Math.min(len, remaining);
+    memory.set(stdin.bytes.subarray(0, n), ptr);
+    stdin.bytes = stdin.bytes.subarray(n);
+    total += n;
+  }
+  return total;
+}
+
+// fd_read helper: drain bytes from an open file's backing Uint8Array
+// into the guest's iovec slots. Advances f.pos by the number of bytes
+// actually transferred (capped by EOF). Returns -1 if the path was
+// removed under us (caller maps to E_BADF).
+function readFromOpenFile(f, view, memory, iovsPtr, iovsLen) {
+  const data = fs.get(f.path);
+  if (!data) return -1;
+  let total = 0;
+  for (let i = 0; i < iovsLen; i++) {
+    const ptr = view.getUint32(iovsPtr + i * 8, true);
+    const len = view.getUint32(iovsPtr + i * 8 + 4, true);
+    const remaining = data.length - f.pos;
+    if (remaining <= 0) break;
+    const n = Math.min(len, remaining);
+    memory.set(data.subarray(f.pos, f.pos + n), ptr);
+    f.pos += n;
+    total += n;
+  }
+  return total;
+}
+
 // fd_write helper: drain iovec contents into a line-buffered console.
 // fd 1/2 (and any unknown fd that isn't a tracked file) lands here so
 // `puts` from mruby reaches console.log without spawning a real tty.
@@ -252,39 +291,17 @@ export const wasiImports = {
     if (debug.trace) console.log(`[wasi] fd_read fd=${fd} iovsLen=${iovsLen}`);
     const view = new DataView(instance.exports.memory.buffer);
     const memory = new Uint8Array(instance.exports.memory.buffer);
+    let total;
     if (fd === 0) {
-      // stdin: consume from the JS-side buffer. Returns 0 (EOF) when empty.
-      let total = 0;
-      for (let i = 0; i < iovsLen; i++) {
-        const ptr = view.getUint32(iovsPtr + i * 8, true);
-        const len = view.getUint32(iovsPtr + i * 8 + 4, true);
-        const remaining = stdin.bytes.length;
-        if (remaining <= 0) break;
-        const n = Math.min(len, remaining);
-        memory.set(stdin.bytes.subarray(0, n), ptr);
-        stdin.bytes = stdin.bytes.subarray(n);
-        total += n;
+      total = readFromStdin(view, memory, iovsPtr, iovsLen);
+    } else {
+      const f = openFiles.get(fd);
+      if (!f) {
+        if (debug.trace) console.log(`[wasi] fd_read EBADF fd=${fd}`);
+        return E_BADF;
       }
-      view.setUint32(nreadPtr, total, true);
-      return 0;
-    }
-    const f = openFiles.get(fd);
-    if (!f) {
-      if (debug.trace) console.log(`[wasi] fd_read EBADF fd=${fd}`);
-      return E_BADF;
-    }
-    const data = fs.get(f.path);
-    if (!data) return E_BADF;
-    let total = 0;
-    for (let i = 0; i < iovsLen; i++) {
-      const ptr = view.getUint32(iovsPtr + i * 8, true);
-      const len = view.getUint32(iovsPtr + i * 8 + 4, true);
-      const remaining = data.length - f.pos;
-      if (remaining <= 0) break;
-      const n = Math.min(len, remaining);
-      memory.set(data.subarray(f.pos, f.pos + n), ptr);
-      f.pos += n;
-      total += n;
+      total = readFromOpenFile(f, view, memory, iovsPtr, iovsLen);
+      if (total < 0) return E_BADF;
     }
     view.setUint32(nreadPtr, total, true);
     return 0;
