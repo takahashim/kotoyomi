@@ -125,10 +125,15 @@ vendor 配置 + コミット」で回避したが、上流 mruby が更新され
 
 ### 5. mruby HEAD の不安定性
 
-今回 `mruby-regexp` の `String#split` が `super` で C 実装に届かない
-バグを踏んだ。**Matz 自身が直前に commit した部分** で、テストでも踏まれて
-いない経路だった。mruby HEAD は CRuby の minor release 並みには安定して
-いない (= リリースタグを使う方が安全)。
+開発初期は HEAD を追っていて、`mruby-regexp` の `String#split` が
+`super` で C 実装に届かないバグを踏んだ。mruby HEAD は
+CRuby の minor release 並みには安定していない。
+
+> **対応**: 現在は `spike/Makefile` の `MRUBY_TAG := 4.0.0` で
+> リリースタグに pin している (4.0.0 にはそもそも `mruby-regexp` 自体が
+> 含まれていないので、このバグの影響を受けない)。HEAD を試したい時は
+> Makefile の 1 行を変えれば良い。デモや配布バンドル用途では
+> リリースタグ pin が現実解。
 
 ### 6. コミュニティ規模
 
