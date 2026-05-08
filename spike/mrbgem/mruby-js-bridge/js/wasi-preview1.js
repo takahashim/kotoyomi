@@ -15,10 +15,34 @@
 //   await boot(url);
 //   evalRuby('puts ENV["HOME"]; puts File.read("/data/poem.vtt")');
 
-import { debug } from "./adapter.js";
+import { debug } from "./debug.js";
 
 const decoder = new TextDecoder("utf-8");
 const encoder = new TextEncoder();
+
+// --- WASI preview1 constants ----------------------------------------------
+// Subsets of the preview1 ABI the in-memory impl actually inspects.
+// Keeping these named avoids scattering 1/4/8/20/28/44 across the
+// imports — names track the wasi-libc / WASI spec.
+//
+// path_open oflags
+const O_CREAT = 1;
+const O_EXCL  = 4;
+const O_TRUNC = 8;
+// path_open / fd_fdstat fdflags
+const FD_APPEND = 1;
+// fd_seek whence
+const WHENCE_SET = 0;
+const WHENCE_CUR = 1;
+const WHENCE_END = 2;
+// preview1 errno values we actually return
+const E_BADF  = 8;
+const E_EXIST = 20;
+const E_INVAL = 28;
+const E_NOENT = 44;
+// filetype values written into filestat records
+const FILETYPE_CHARACTER_DEVICE = 2;
+const FILETYPE_REGULAR_FILE = 4;
 
 /** Environment variables visible to Ruby's `ENV` / wasi-libc's getenv. */
 export const env = {};
@@ -74,7 +98,7 @@ function resolvePath(rel) {
 // filetype, nlink) are filled; timestamps and dev/ino stay 0.
 function writeFilestat(view, ptr, size) {
   for (let i = 0; i < 64; i++) view.setUint8(ptr + i, 0);
-  view.setUint8(ptr + 16, 4);                            // filetype = regular_file
+  view.setUint8(ptr + 16, FILETYPE_REGULAR_FILE);
   view.setBigUint64(ptr + 24, 1n, true);                 // nlink
   view.setBigUint64(ptr + 32, BigInt(size), true);       // size
 }
@@ -85,60 +109,73 @@ function readUtf8(ptr, len) {
   return decoder.decode(bytes);
 }
 
-// --- WASI imports ----------------------------------------------------------
-// Minimal WASI fd_write so `puts` from mruby maps to console.log.
+// Sum the byte length across an iovec array (uint32 length lives at
+// offset 4 of each 8-byte slot — ptr at offset 0, len at offset 4).
+function iovsTotalLen(view, iovsPtr, iovsLen) {
+  let total = 0;
+  for (let i = 0; i < iovsLen; i++) total += view.getUint32(iovsPtr + i * 8 + 4, true);
+  return total;
+}
+
+// fd_write helper: write the iovec contents into the in-memory file
+// backing `f`. Grows the Uint8Array if needed, advances f.pos for
+// non-append fds, returns the number of bytes written.
+function writeToOpenFile(f, view, memory, iovsPtr, iovsLen) {
+  const data = fs.get(f.path);
+  const needed = iovsTotalLen(view, iovsPtr, iovsLen);
+  const writeStart = f.append ? data.length : f.pos;
+  const newSize = Math.max(data.length, writeStart + needed);
+  let target = data;
+  if (newSize > data.length) {
+    target = new Uint8Array(newSize);
+    target.set(data);
+    fs.set(f.path, target);
+  }
+  let pos = writeStart;
+  let total = 0;
+  for (let i = 0; i < iovsLen; i++) {
+    const ptr = view.getUint32(iovsPtr + i * 8, true);
+    const len = view.getUint32(iovsPtr + i * 8 + 4, true);
+    target.set(memory.subarray(ptr, ptr + len), pos);
+    pos += len;
+    total += len;
+  }
+  if (!f.append) f.pos = pos;
+  return total;
+}
+
+// fd_write helper: drain iovec contents into a line-buffered console.
+// fd 1/2 (and any unknown fd that isn't a tracked file) lands here so
+// `puts` from mruby reaches console.log without spawning a real tty.
 const stdoutBuffer = [];
+function writeToStdio(view, memory, iovsPtr, iovsLen) {
+  let total = 0;
+  for (let i = 0; i < iovsLen; i++) {
+    const ptr = view.getUint32(iovsPtr + i * 8, true);
+    const len = view.getUint32(iovsPtr + i * 8 + 4, true);
+    const str = decoder.decode(memory.subarray(ptr, ptr + len));
+    stdoutBuffer.push(str);
+    if (str.includes("\n")) {
+      const joined = stdoutBuffer.join("");
+      stdoutBuffer.length = 0;
+      for (const line of joined.split("\n")) {
+        if (line.length > 0) console.log("[mruby]", line);
+      }
+    }
+    total += len;
+  }
+  return total;
+}
+
+// --- WASI imports ----------------------------------------------------------
 export const wasiImports = {
   fd_write(fd, iovsPtr, iovsLen, nwrittenPtr) {
     const view = new DataView(instance.exports.memory.buffer);
     const memory = new Uint8Array(instance.exports.memory.buffer);
-
-    // File write path: dispatch to virtual fs.
-    if (openFiles.has(fd)) {
-      const f = openFiles.get(fd);
-      const data = fs.get(f.path);
-      // Sum up total bytes to write (so we resize once).
-      let needed = 0;
-      for (let i = 0; i < iovsLen; i++) needed += view.getUint32(iovsPtr + i * 8 + 4, true);
-      const writeStart = f.append ? data.length : f.pos;
-      const newSize = Math.max(data.length, writeStart + needed);
-      let target = data;
-      if (newSize > data.length) {
-        target = new Uint8Array(newSize);
-        target.set(data);
-        fs.set(f.path, target);
-      }
-      let pos = writeStart;
-      let total = 0;
-      for (let i = 0; i < iovsLen; i++) {
-        const ptr = view.getUint32(iovsPtr + i * 8, true);
-        const len = view.getUint32(iovsPtr + i * 8 + 4, true);
-        target.set(memory.subarray(ptr, ptr + len), pos);
-        pos += len;
-        total += len;
-      }
-      if (!f.append) f.pos = pos;
-      view.setUint32(nwrittenPtr, total, true);
-      return 0;
-    }
-
-    // Stdio path: route fd 1/2 (and any unknown fd) to console.log,
-    // line-buffered.
-    let total = 0;
-    for (let i = 0; i < iovsLen; i++) {
-      const ptr = view.getUint32(iovsPtr + i * 8, true);
-      const len = view.getUint32(iovsPtr + i * 8 + 4, true);
-      const str = decoder.decode(memory.subarray(ptr, ptr + len));
-      stdoutBuffer.push(str);
-      if (str.includes("\n")) {
-        const joined = stdoutBuffer.join("");
-        stdoutBuffer.length = 0;
-        for (const line of joined.split("\n")) {
-          if (line.length > 0) console.log("[mruby]", line);
-        }
-      }
-      total += len;
-    }
+    const f = openFiles.get(fd);
+    const total = f
+      ? writeToOpenFile(f, view, memory, iovsPtr, iovsLen)
+      : writeToStdio(view, memory, iovsPtr, iovsLen);
     view.setUint32(nwrittenPtr, total, true);
     return 0;
   },
@@ -148,18 +185,18 @@ export const wasiImports = {
   },
   fd_seek(fd, offset /* BigInt */, whence, newOffsetPtr) {
     const f = openFiles.get(fd);
-    if (!f) return 8; // EBADF — stdio not seekable here
+    if (!f) return E_BADF; // stdio not seekable here
     const data = fs.get(f.path);
-    if (!data) return 8;
+    if (!data) return E_BADF;
     const off = Number(offset);
     let newPos;
     switch (whence) {
-      case 0: newPos = off; break;               // WHENCE_SET
-      case 1: newPos = f.pos + off; break;       // WHENCE_CUR
-      case 2: newPos = data.length + off; break; // WHENCE_END
-      default: return 28;                        // EINVAL
+      case WHENCE_SET: newPos = off; break;
+      case WHENCE_CUR: newPos = f.pos + off; break;
+      case WHENCE_END: newPos = data.length + off; break;
+      default: return E_INVAL;
     }
-    if (newPos < 0) return 28;
+    if (newPos < 0) return E_INVAL;
     f.pos = newPos;
     const view = new DataView(instance.exports.memory.buffer);
     view.setBigUint64(newOffsetPtr, BigInt(newPos), true);
@@ -167,7 +204,7 @@ export const wasiImports = {
   },
   fd_tell(fd, ptr) {
     const f = openFiles.get(fd);
-    if (!f) return 8;
+    if (!f) return E_BADF;
     const view = new DataView(instance.exports.memory.buffer);
     view.setBigUint64(ptr, BigInt(f.pos), true);
     return 0;
@@ -183,20 +220,20 @@ export const wasiImports = {
     const f = openFiles.get(fd);
     if (f) {
       const data = fs.get(f.path);
-      if (!data) return 8;
+      if (!data) return E_BADF;
       writeFilestat(view, ptr, data.length);
       return 0;
     }
     if (fd === 0 || fd === 1 || fd === 2) {
       // stdio = char device, size 0
       for (let i = 0; i < 64; i++) view.setUint8(ptr + i, 0);
-      view.setUint8(ptr + 16, 2); // filetype_character_device
+      view.setUint8(ptr + 16, FILETYPE_CHARACTER_DEVICE);
       return 0;
     }
-    return 8;
+    return E_BADF;
   },
   fd_prestat_get(fd, ptr) {
-    if (fd !== PREOPEN_FD) return 8; // EBADF — terminates wasi-libc preopen scan
+    if (fd !== PREOPEN_FD) return E_BADF; // terminates wasi-libc preopen scan
     const view = new DataView(instance.exports.memory.buffer);
     const nameBytes = encoder.encode(PREOPEN_PATH);
     view.setUint8(ptr, 0);                                 // tag = preopentype_dir
@@ -204,7 +241,7 @@ export const wasiImports = {
     return 0;
   },
   fd_prestat_dir_name(fd, ptr, len) {
-    if (fd !== PREOPEN_FD) return 8;
+    if (fd !== PREOPEN_FD) return E_BADF;
     const memory = new Uint8Array(instance.exports.memory.buffer);
     const nameBytes = encoder.encode(PREOPEN_PATH);
     const n = Math.min(nameBytes.length, len);
@@ -234,10 +271,10 @@ export const wasiImports = {
     const f = openFiles.get(fd);
     if (!f) {
       if (debug.trace) console.log(`[wasi] fd_read EBADF fd=${fd}`);
-      return 8;
+      return E_BADF;
     }
     const data = fs.get(f.path);
-    if (!data) return 8;
+    if (!data) return E_BADF;
     let total = 0;
     for (let i = 0; i < iovsLen; i++) {
       const ptr = view.getUint32(iovsPtr + i * 8, true);
@@ -255,24 +292,20 @@ export const wasiImports = {
   path_open(dirfd, _dirflags, pathPtr, pathLen,
             oflags, _rightsBase /* i64 BigInt */, _rightsInh /* i64 BigInt */,
             fdflags, fdPtr) {
-    // oflags bits (WASI preview1): 1=CREAT, 2=DIRECTORY, 4=EXCL, 8=TRUNC
-    // fdflags bits: 1=APPEND, 2=DSYNC, 4=NONBLOCK, 8=RSYNC, 16=SYNC
     if (debug.trace) console.log(`[wasi] path_open dirfd=${dirfd} path="${readUtf8(pathPtr, pathLen)}" oflags=${oflags} fdflags=${fdflags}`);
-    if (dirfd !== PREOPEN_FD) return 8;
+    if (dirfd !== PREOPEN_FD) return E_BADF;
     const relPath = readUtf8(pathPtr, pathLen);
     const fullPath = resolvePath(relPath);
 
-    const create = !!(oflags & 1);
-    const excl   = !!(oflags & 4);
-    const trunc  = !!(oflags & 8);
-    const append = !!(fdflags & 1);
+    const create = !!(oflags & O_CREAT);
+    const excl   = !!(oflags & O_EXCL);
+    const trunc  = !!(oflags & O_TRUNC);
+    const append = !!(fdflags & FD_APPEND);
 
     const exists = fs.has(fullPath);
-    if (excl && exists) return 20;       // EEXIST
-    if (!exists && !create) return 44;   // ENOENT
-    if (!exists) {
-      fs.set(fullPath, new Uint8Array(0));
-    } else if (trunc) {
+    if (excl && exists) return E_EXIST;
+    if (!exists && !create) return E_NOENT;
+    if (!exists || trunc) {
       fs.set(fullPath, new Uint8Array(0));
     }
 
@@ -285,10 +318,10 @@ export const wasiImports = {
     return 0;
   },
   path_filestat_get(dirfd, _flags, pathPtr, pathLen, ptr) {
-    if (dirfd !== PREOPEN_FD) return 8;
+    if (dirfd !== PREOPEN_FD) return E_BADF;
     const relPath = readUtf8(pathPtr, pathLen);
     const data = fs.get(resolvePath(relPath));
-    if (!data) return 44;
+    if (!data) return E_NOENT;
     writeFilestat(new DataView(instance.exports.memory.buffer), ptr, data.length);
     return 0;
   },
@@ -372,11 +405,11 @@ export const wasiImports = {
   // write-side filesystem ops ----------------------------------------------
   fd_filestat_set_size(fd, size /* i64 BigInt */) {
     const f = openFiles.get(fd);
-    if (!f) return 8; // EBADF
+    if (!f) return E_BADF;
     const data = fs.get(f.path);
-    if (!data) return 8;
+    if (!data) return E_BADF;
     const newSize = Number(size);
-    if (newSize < 0) return 28; // EINVAL
+    if (newSize < 0) return E_INVAL;
     if (newSize < data.length) {
       fs.set(f.path, data.slice(0, newSize));
     } else if (newSize > data.length) {
@@ -388,36 +421,21 @@ export const wasiImports = {
   },
   fd_pwrite(fd, iovsPtr, iovsLen, offset /* i64 BigInt */, nwrittenPtr) {
     const f = openFiles.get(fd);
-    if (!f) return 8;
+    if (!f) return E_BADF;
     const view = new DataView(instance.exports.memory.buffer);
     const memory = new Uint8Array(instance.exports.memory.buffer);
-    const data = fs.get(f.path);
-    let needed = 0;
-    for (let i = 0; i < iovsLen; i++) needed += view.getUint32(iovsPtr + i * 8 + 4, true);
-    const startPos = Number(offset);
-    const newSize = Math.max(data.length, startPos + needed);
-    let target = data;
-    if (newSize > data.length) {
-      target = new Uint8Array(newSize);
-      target.set(data);
-      fs.set(f.path, target);
-    }
-    let pos = startPos;
-    let total = 0;
-    for (let i = 0; i < iovsLen; i++) {
-      const ptr = view.getUint32(iovsPtr + i * 8, true);
-      const len = view.getUint32(iovsPtr + i * 8 + 4, true);
-      target.set(memory.subarray(ptr, ptr + len), pos);
-      pos += len;
-      total += len;
-    }
+    // Treat pwrite like a non-append write at an explicit offset, but
+    // don't advance f.pos. We synthesize a one-shot pseudo-fd-state
+    // pointing at the requested offset and reuse writeToOpenFile.
+    const pseudo = { path: f.path, pos: Number(offset), append: false };
+    const total = writeToOpenFile(pseudo, view, memory, iovsPtr, iovsLen);
     view.setUint32(nwrittenPtr, total, true);
     return 0;
   },
   path_unlink_file(dirfd, pathPtr, pathLen) {
-    if (dirfd !== PREOPEN_FD) return 8;
+    if (dirfd !== PREOPEN_FD) return E_BADF;
     const fullPath = resolvePath(readUtf8(pathPtr, pathLen));
-    if (!fs.has(fullPath)) return 44; // ENOENT
+    if (!fs.has(fullPath)) return E_NOENT;
     fs.delete(fullPath);
     return 0;
   },
@@ -427,28 +445,28 @@ export const wasiImports = {
   path_create_directory(_dirfd, _pathPtr, _pathLen) { return 0; },
   path_remove_directory(_dirfd, _pathPtr, _pathLen) { return 0; },
 
-  // unimplemented (not exercised in current scope) — return ENOSYS-ish ------
-  fd_filestat_set_times(_fd, _atim, _mtim, _flags) { return 28; },
-  fd_pread(_fd, _iovs, _iovsLen, _offset, _nreadPtr) { return 28; },
-  fd_readdir(_fd, _buf, _bufLen, _cookie, _bufused) { return 28; },
-  fd_renumber(_from, _to) { return 28; },
+  // unimplemented (not exercised in current scope) — return EINVAL-ish -----
+  fd_filestat_set_times(_fd, _atim, _mtim, _flags) { return E_INVAL; },
+  fd_pread(_fd, _iovs, _iovsLen, _offset, _nreadPtr) { return E_INVAL; },
+  fd_readdir(_fd, _buf, _bufLen, _cookie, _bufused) { return E_INVAL; },
+  fd_renumber(_from, _to) { return E_INVAL; },
   fd_sync(_fd) { return 0; },
   fd_advise(_fd, _offset, _len, _advice) { return 0; },
-  fd_allocate(_fd, _offset, _len) { return 28; },
+  fd_allocate(_fd, _offset, _len) { return E_INVAL; },
   fd_datasync(_fd) { return 0; },
-  path_filestat_set_times() { return 28; },
-  path_link() { return 28; },
-  path_readlink() { return 28; },
+  path_filestat_set_times() { return E_INVAL; },
+  path_link() { return E_INVAL; },
+  path_readlink() { return E_INVAL; },
   path_rename(oldDirfd, oldPathPtr, oldPathLen, newDirfd, newPathPtr, newPathLen) {
-    if (oldDirfd !== PREOPEN_FD || newDirfd !== PREOPEN_FD) return 8;
+    if (oldDirfd !== PREOPEN_FD || newDirfd !== PREOPEN_FD) return E_BADF;
     const oldPath = resolvePath(readUtf8(oldPathPtr, oldPathLen));
     const newPath = resolvePath(readUtf8(newPathPtr, newPathLen));
-    if (!fs.has(oldPath)) return 44;
+    if (!fs.has(oldPath)) return E_NOENT;
     fs.set(newPath, fs.get(oldPath));
     fs.delete(oldPath);
     return 0;
   },
-  path_symlink() { return 28; },
-  poll_oneoff() { return 28; },
+  path_symlink() { return E_INVAL; },
+  poll_oneoff() { return E_INVAL; },
   sched_yield() { return 0; },
 };

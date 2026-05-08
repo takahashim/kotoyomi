@@ -10,6 +10,14 @@
 // re-exported below. It can be swapped per-boot via
 // `boot(url, { wasi })` — see boot()'s JSDoc.
 
+import {
+  bindInstance as bindWasiInstance,
+  wasiImports,
+} from "./wasi-preview1.js";
+import { debug } from "./debug.js";
+export { wasiImports, debug };
+export { env, args, stdin, fs } from "./wasi-preview1.js";
+
 // --- Handle table -----------------------------------------------------------
 // index 0 is reserved as a "null" sentinel. Allocations recycle from a free
 // list to keep handle numbers small.
@@ -44,11 +52,6 @@ let instance = null;
 const decoder = new TextDecoder("utf-8");
 const encoder = new TextEncoder();
 
-// Debug toggle for the [trace] handle/callback logs. Set to true to
-// inspect handle release timing and callback dispatch (was always-on
-// during the Phase 2c spike). Off by default — production noise.
-export const debug = { trace: false };
-
 // Latest JS exception caught by a primitive. The C side calls
 // js_take_error() right after each potentially-throwing op; if a handle
 // is returned, mruby raises JSBridge::Error with the message string.
@@ -57,20 +60,6 @@ let pendingError = null;
 function captureError(err) {
   pendingError = err;
 }
-
-// --- WASI configuration re-exports -----------------------------------------
-// The default WASI preview1 implementation lives in a sibling module so
-// callers can either use it via `boot(url)` or replace it via
-// `boot(url, { wasi })`. The host-side configuration objects (env, args,
-// stdin, fs) and the bundled `wasiImports` are re-exported from here for
-// API stability — `import { boot, env, fs } from "<gem>/js/adapter.js"`
-// keeps working as before.
-import {
-  bindInstance as bindWasiInstance,
-  wasiImports,
-} from "./wasi-preview1.js";
-export { wasiImports };
-export { env, args, stdin, fs } from "./wasi-preview1.js";
 
 function readUtf8(ptr, len) {
   const memory = instance.exports.memory;
