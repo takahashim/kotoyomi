@@ -16,7 +16,7 @@ import {
 } from "./wasi-preview1.js";
 import { debug } from "./debug.js";
 export { wasiImports, debug };
-export { env, args, stdin, fs } from "./wasi-preview1.js";
+export { env, args, stdin, fs, File, Directory } from "./wasi-preview1.js";
 
 // --- Handle table -----------------------------------------------------------
 // index 0 is reserved as a "null" sentinel. Allocations recycle from a free

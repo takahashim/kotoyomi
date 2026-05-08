@@ -17,7 +17,7 @@ mruby-js-bridge/
 └── wasm_spec/                # Self-contained tests (need a JS host to run)
     ├── spec_helper.rb        # Spec micro-framework
     ├── runner.mjs            # Node test runner
-    └── test_*.rb             # 10 test files, ~119 tests
+    └── test_*.rb             # 11 test files, ~126 tests
 ```
 
 The directory is `wasm_spec/` rather than `test/` to avoid mruby-test's
@@ -74,10 +74,38 @@ The adapter also exports a few host-side knobs:
 | `env` | object — set entries before `boot` to populate Ruby `ENV` (requires `mruby-env` mgem) |
 | `args` | array — push entries before `boot` to populate Ruby `ARGV` |
 | `stdin` | object with `pushText(s)` / `bytes` — feed bytes to `STDIN.read` / `gets` |
-| `fs` | `Map<path, Uint8Array>` — pre-populate or inspect the in-memory virtual filesystem |
+| `fs` | Map-like facade over the tree VFS (see below) |
+| `File` / `Directory` | tree-VFS node classes for declarative population |
 | `wasiImports` | the bundled WASI preview1 implementation (clock, random, env, args, stdin, fs read/write) |
 | `debug` | `{ trace: false }` — set `debug.trace = true` to see handle release / callback dispatch |
 | `alloc` / `get` / `release` | low-level handle table — usually you don't need these |
+
+#### Populating the virtual filesystem
+
+The bundled WASI preview1 implementation backs `File.read` / `File.open` /
+`File.write` etc. with a tree of `File` and `Directory` nodes. Two ways
+to populate it:
+
+```js
+import { fs, File, Directory } from "<path-to-gem>/js/adapter.js";
+
+// 1. Map-style — auto-creates intermediate Directory nodes on demand.
+fs.set("/data/poem.vtt", new TextEncoder().encode("WEBVTT\n..."));
+fs.set("/config/app.json", new TextEncoder().encode("{}"));
+
+// 2. Declarative — hand over a whole tree at once.
+fs.populate(new Directory({
+  data: new Directory({
+    "poem.vtt": new File(new TextEncoder().encode("WEBVTT\n...")),
+  }),
+  empty_dir: new Directory(),
+}));
+```
+
+`fs` supports `set` / `get` / `has` / `delete` / `entries` / `keys` /
+`values` / `Symbol.iterator` / `clear` / `size` (Map-compatible), plus
+`populate(dir)` and `root` for tree access. Iteration yields only File
+leaves, in tree-traversal order.
 
 #### Swapping in a different WASI
 
@@ -141,7 +169,7 @@ MRUBY_JS_BRIDGE_WASM=/abs/path/to/your/mruby.wasm \
   node wasm_spec/runner.mjs
 ```
 
-Expected: `119/119 tests pass (180 assertions)`. Exit code 0 on success,
+Expected: `126/126 tests pass (187 assertions)`. Exit code 0 on success,
 1 on any failure.
 
 ## Dependencies

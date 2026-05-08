@@ -36,13 +36,17 @@ const WHENCE_SET = 0;
 const WHENCE_CUR = 1;
 const WHENCE_END = 2;
 // preview1 errno values we actually return
-const E_BADF  = 8;
-const E_EXIST = 20;
-const E_INVAL = 28;
-const E_NOENT = 44;
+const E_BADF     = 8;
+const E_EXIST    = 20;
+const E_INVAL    = 28;
+const E_ISDIR    = 31;
+const E_NOENT    = 44;
+const E_NOTDIR   = 54;
+const E_NOTEMPTY = 55;
 // filetype values written into filestat records
 const FILETYPE_CHARACTER_DEVICE = 2;
-const FILETYPE_REGULAR_FILE = 4;
+const FILETYPE_DIRECTORY        = 3;
+const FILETYPE_REGULAR_FILE     = 4;
 
 /** Environment variables visible to Ruby's `ENV` / wasi-libc's getenv. */
 export const env = {};
@@ -69,8 +73,163 @@ export const stdin = {
   },
 };
 
-/** Virtual filesystem. Map of absolute path → Uint8Array. */
-export const fs = new Map();
+// --- Tree VFS --------------------------------------------------------------
+// Internal storage is a tree of `File` and `Directory` nodes. The `fs`
+// object below presents a Map-compatible facade (set/get/has/delete +
+// iteration) so existing code that does `fs.set("/data/poem.vtt", bytes)`
+// keeps working unchanged — `set` walks path segments and auto-creates
+// intermediate Directory nodes on demand.
+//
+// Power users can also construct a tree declaratively and hand it over
+// in one shot via `fs.populate(new Directory({ ... }))`.
+
+/** A regular-file node in the VFS. Holds raw bytes; no path stored
+ *  (the path is implicit from the parent Directory's entries map). */
+export class File {
+  constructor(data = new Uint8Array(0)) {
+    this.data = data;
+  }
+}
+
+/** A directory node in the VFS. `entries` maps name → File | Directory. */
+export class Directory {
+  constructor(entries = {}) {
+    this.entries = entries;
+  }
+}
+
+const root = new Directory();
+
+function pathSegments(absPath) {
+  return absPath.split("/").filter((s) => s.length > 0);
+}
+
+// Walk an absolute path. Returns one of:
+//   { parent, name, node }     — node is the resolved File|Directory or null if missing
+//   { parent: null, name: "", node: root }  — root itself
+//   null                       — traversal hit a File mid-path (caller maps to E_NOTDIR)
+function lookupFull(absPath) {
+  const segs = pathSegments(absPath);
+  if (segs.length === 0) return { parent: null, name: "", node: root };
+  let dir = root;
+  for (let i = 0; i < segs.length - 1; i++) {
+    const next = dir.entries[segs[i]];
+    if (next == null) {
+      return { parent: dir, name: segs[segs.length - 1], node: null };
+    }
+    if (!(next instanceof Directory)) return null;
+    dir = next;
+  }
+  const leaf = segs[segs.length - 1];
+  return { parent: dir, name: leaf, node: dir.entries[leaf] ?? null };
+}
+
+function lookupNode(absPath) {
+  const r = lookupFull(absPath);
+  return r ? r.node : null;
+}
+
+// Walk to (or create) the parent Directory of absPath. Auto-creates
+// intermediate Directory nodes; throws if any intermediate is a File.
+function ensureParent(absPath) {
+  const segs = pathSegments(absPath);
+  if (segs.length === 0) throw new Error("cannot ensure parent of root");
+  let dir = root;
+  for (let i = 0; i < segs.length - 1; i++) {
+    const name = segs[i];
+    let next = dir.entries[name];
+    if (next == null) {
+      next = new Directory();
+      dir.entries[name] = next;
+    } else if (!(next instanceof Directory)) {
+      throw new Error(`cannot create '${absPath}': '${name}' is a file`);
+    }
+    dir = next;
+  }
+  return { parent: dir, leaf: segs[segs.length - 1] };
+}
+
+// Walk all File leaves yielding [absolutePath, bytes] pairs.
+function* walkFiles(prefix, dir) {
+  for (const [name, node] of Object.entries(dir.entries)) {
+    const path = prefix + "/" + name;
+    if (node instanceof File) {
+      yield [path, node.data];
+    } else {
+      yield* walkFiles(path, node);
+    }
+  }
+}
+
+/** Map-compatible virtual filesystem facade. Backed by a tree of
+ *  File / Directory nodes; `set(path, bytes)` auto-creates intermediate
+ *  directories. Iteration yields only File leaves (not directories). */
+export const fs = {
+  set(path, bytes) {
+    const { parent, leaf } = ensureParent(path);
+    const existing = parent.entries[leaf];
+    if (existing instanceof Directory) {
+      throw new Error(`cannot set '${path}': it's a directory`);
+    }
+    if (existing instanceof File) {
+      existing.data = bytes;
+    } else {
+      parent.entries[leaf] = new File(bytes);
+    }
+    return this;
+  },
+  get(path) {
+    const node = lookupNode(path);
+    return node instanceof File ? node.data : undefined;
+  },
+  has(path) {
+    return lookupNode(path) instanceof File;
+  },
+  delete(path) {
+    const r = lookupFull(path);
+    if (!r || !(r.node instanceof File) || !r.parent) return false;
+    delete r.parent.entries[r.name];
+    return true;
+  },
+  *entries() {
+    yield* walkFiles("", root);
+  },
+  *keys() {
+    for (const [p] of this.entries()) yield p;
+  },
+  *values() {
+    for (const [, v] of this.entries()) yield v;
+  },
+  [Symbol.iterator]() {
+    return this.entries();
+  },
+  get size() {
+    let n = 0;
+    for (const _ of this.entries()) n++;
+    return n;
+  },
+  clear() {
+    root.entries = {};
+  },
+  /** Replace the entire tree with `dir`. Useful for declarative setup:
+   *
+   *    fs.populate(new Directory({
+   *      "data": new Directory({ "poem.vtt": new File(bytes) }),
+   *    }));
+   */
+  populate(dir) {
+    if (!(dir instanceof Directory)) {
+      throw new TypeError("fs.populate expects a Directory");
+    }
+    root.entries = dir.entries;
+  },
+  /** Direct access to the underlying root Directory (for inspection or
+   *  manipulation that the Map facade doesn't cover, e.g. creating an
+   *  empty subdirectory programmatically). */
+  get root() {
+    return root;
+  },
+};
 
 const PREOPEN_FD = 3;
 const PREOPEN_PATH = "/";
@@ -94,11 +253,11 @@ function resolvePath(rel) {
   return (PREOPEN_PATH + "/" + rel).replace(/\/+/g, "/");
 }
 
-// Write a 64-byte WASI filestat record. Only fields we care about (size,
-// filetype, nlink) are filled; timestamps and dev/ino stay 0.
-function writeFilestat(view, ptr, size) {
+// Write a 64-byte WASI filestat record. Only fields we care about
+// (filetype, nlink, size) are filled; timestamps and dev/ino stay 0.
+function writeFilestat(view, ptr, filetype, size) {
   for (let i = 0; i < 64; i++) view.setUint8(ptr + i, 0);
-  view.setUint8(ptr + 16, FILETYPE_REGULAR_FILE);
+  view.setUint8(ptr + 16, filetype);
   view.setBigUint64(ptr + 24, 1n, true);                 // nlink
   view.setBigUint64(ptr + 32, BigInt(size), true);       // size
 }
@@ -260,13 +419,11 @@ export const wasiImports = {
     if (f) {
       const data = fs.get(f.path);
       if (!data) return E_BADF;
-      writeFilestat(view, ptr, data.length);
+      writeFilestat(view, ptr, FILETYPE_REGULAR_FILE, data.length);
       return 0;
     }
     if (fd === 0 || fd === 1 || fd === 2) {
-      // stdio = char device, size 0
-      for (let i = 0; i < 64; i++) view.setUint8(ptr + i, 0);
-      view.setUint8(ptr + 16, FILETYPE_CHARACTER_DEVICE);
+      writeFilestat(view, ptr, FILETYPE_CHARACTER_DEVICE, 0);
       return 0;
     }
     return E_BADF;
@@ -319,7 +476,9 @@ export const wasiImports = {
     const trunc  = !!(oflags & O_TRUNC);
     const append = !!(fdflags & FD_APPEND);
 
-    const exists = fs.has(fullPath);
+    const node = lookupNode(fullPath);
+    if (node instanceof Directory) return E_ISDIR;  // O_DIRECTORY not yet supported
+    const exists = node instanceof File;
     if (excl && exists) return E_EXIST;
     if (!exists && !create) return E_NOENT;
     if (!exists || trunc) {
@@ -337,9 +496,14 @@ export const wasiImports = {
   path_filestat_get(dirfd, _flags, pathPtr, pathLen, ptr) {
     if (dirfd !== PREOPEN_FD) return E_BADF;
     const relPath = readUtf8(pathPtr, pathLen);
-    const data = fs.get(resolvePath(relPath));
-    if (!data) return E_NOENT;
-    writeFilestat(new DataView(instance.exports.memory.buffer), ptr, data.length);
+    const node = lookupNode(resolvePath(relPath));
+    if (!node) return E_NOENT;
+    const view = new DataView(instance.exports.memory.buffer);
+    if (node instanceof Directory) {
+      writeFilestat(view, ptr, FILETYPE_DIRECTORY, 0);
+    } else {
+      writeFilestat(view, ptr, FILETYPE_REGULAR_FILE, node.data.length);
+    }
     return 0;
   },
   proc_exit(code) {
@@ -452,15 +616,40 @@ export const wasiImports = {
   path_unlink_file(dirfd, pathPtr, pathLen) {
     if (dirfd !== PREOPEN_FD) return E_BADF;
     const fullPath = resolvePath(readUtf8(pathPtr, pathLen));
-    if (!fs.has(fullPath)) return E_NOENT;
+    const node = lookupNode(fullPath);
+    if (!node) return E_NOENT;
+    if (node instanceof Directory) return E_ISDIR;
     fs.delete(fullPath);
     return 0;
   },
-  // Our flat Map model doesn't track explicit dir entries — directories
-  // are implicit. Treat mkdir / rmdir as no-ops for compatibility with
-  // FileUtils.mkdir_p style code that doesn't actually need a real dir.
-  path_create_directory(_dirfd, _pathPtr, _pathLen) { return 0; },
-  path_remove_directory(_dirfd, _pathPtr, _pathLen) { return 0; },
+  path_create_directory(dirfd, pathPtr, pathLen) {
+    if (dirfd !== PREOPEN_FD) return E_BADF;
+    const fullPath = resolvePath(readUtf8(pathPtr, pathLen));
+    const segs = pathSegments(fullPath);
+    if (segs.length === 0) return E_EXIST; // root already exists
+    let dir = root;
+    for (let i = 0; i < segs.length - 1; i++) {
+      const next = dir.entries[segs[i]];
+      if (next == null) return E_NOENT;
+      if (!(next instanceof Directory)) return E_NOTDIR;
+      dir = next;
+    }
+    const leaf = segs[segs.length - 1];
+    if (dir.entries[leaf] != null) return E_EXIST;
+    dir.entries[leaf] = new Directory();
+    return 0;
+  },
+  path_remove_directory(dirfd, pathPtr, pathLen) {
+    if (dirfd !== PREOPEN_FD) return E_BADF;
+    const fullPath = resolvePath(readUtf8(pathPtr, pathLen));
+    const r = lookupFull(fullPath);
+    if (!r || r.node == null) return E_NOENT;
+    if (!(r.node instanceof Directory)) return E_NOTDIR;
+    if (!r.parent) return E_INVAL; // can't rmdir root
+    if (Object.keys(r.node.entries).length > 0) return E_NOTEMPTY;
+    delete r.parent.entries[r.name];
+    return 0;
+  },
 
   // unimplemented (not exercised in current scope) — return EINVAL-ish -----
   fd_filestat_set_times(_fd, _atim, _mtim, _flags) { return E_INVAL; },
