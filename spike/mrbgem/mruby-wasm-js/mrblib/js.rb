@@ -13,13 +13,13 @@
 
 module JS
   # JS::Error is defined in C (extends StandardError). Reopen it
-  # here to expose the original JS Error object via #js_value, attached
+  # here to expose the original JS Error object via #exception_object, attached
   # by raise_if_js_error in C. Lets users read .name / .stack / .cause:
   #   rescue JS::Error => e
-  #     puts e.js_value[:name].to_s   # => "TypeError"
-  #     puts e.js_value[:stack].to_s  # => "TypeError: ...\n  at ..."
+  #     puts e.exception_object[:name].to_s   # => "TypeError"
+  #     puts e.exception_object[:stack].to_s  # => "TypeError: ...\n  at ..."
   class Error
-    attr_reader :js_value
+    attr_reader :exception_object
   end
 
   # Ivars on the JS module itself (not its singleton class) — must

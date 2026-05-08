@@ -5,26 +5,26 @@ Spec.describe "JS::Error propagation" do
     Spec.assert_true JS::Error < StandardError
   end
 
-  Spec.assert "Error#js_value exposes original JS Error object" do
+  Spec.assert "Error#exception_object exposes original JS Error object" do
     err = Spec.assert_raises(JS::Error) do
       JS.eval("(()=>{ throw new TypeError('typed') })()")
     end
-    Spec.assert_equal "TypeError", err.js_value[:name].to_s
-    Spec.assert_equal "typed", err.js_value[:message].to_s
+    Spec.assert_equal "TypeError", err.exception_object[:name].to_s
+    Spec.assert_equal "typed", err.exception_object[:message].to_s
   end
 
-  Spec.assert "Error#js_value preserves custom attributes" do
+  Spec.assert "Error#exception_object preserves custom attributes" do
     err = Spec.assert_raises(JS::Error) do
       JS.eval("(()=>{ const e = new Error('x'); e.code = 'OOPS'; throw e })()")
     end
-    Spec.assert_equal "OOPS", err.js_value[:code].to_s
+    Spec.assert_equal "OOPS", err.exception_object[:code].to_s
   end
 
   Spec.assert "non-Error throw gets wrapped" do
     err = Spec.assert_raises(JS::Error) do
       JS.eval("(()=>{ throw 42 })()")
     end
-    Spec.assert_equal "Error", err.js_value[:name].to_s
+    Spec.assert_equal "Error", err.exception_object[:name].to_s
     Spec.assert_equal "42", err.message
   end
 
