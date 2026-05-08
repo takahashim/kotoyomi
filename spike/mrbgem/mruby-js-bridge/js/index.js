@@ -33,22 +33,13 @@ import { debug } from "./debug.js";
 
 export { Directory, File, createFsFacade, debug };
 
-// POSIX function stubs that mruby-io / hal-posix-io reference but
-// wasi-libc doesn't ship. With mruby 4.0.0 the HAL was extracted to
-// `hal-posix-io`, and that gem's io_hal.c calls real POSIX APIs —
-// many of which wasi-libc lacks. Stubs return -1 for everything; the
-// kotoyomi spike never exercises Process.spawn / IO.popen / umask
-// etc. so this is safe in practice.
-//
-// Pair with `spike/stubs/wasi-shims.h` — both lists must stay in sync;
-// add a new symbol there too whenever a new POSIX function is needed
-// at compile time.
-const POSIX_STUB_NAMES = [
-  "dup", "dup2", "waitpid", "pipe", "fork", "execl",
-  "umask", "flock", "getpwnam",
-];
+// `env` import object for instantiateStreaming. Empty in current builds:
+// the gem's mruby.wasm uses hal-wasi-io (mrbgem/hal-wasi-io/) for the
+// IO HAL backend, and mruby-wasi-stubs (mrbgem/mruby-wasi-stubs/) for
+// the few POSIX symbols mruby-io's io.c references directly (dup,
+// waitpid). Both are linked into the wasm itself, leaving the `env`
+// import module with nothing to satisfy.
 const envImports = {};
-for (const name of POSIX_STUB_NAMES) envImports[name] = (..._args) => -1;
 
 // --- Pure helpers ---------------------------------------------------------
 

@@ -29,11 +29,20 @@ MAIN_C := $(CURDIR)/main/main.c
 HOST_DIR := $(CURDIR)/host
 HOST_WASM := $(HOST_DIR)/mruby.wasm
 
+# CLI / wasmtime variant — same gem set minus mruby-js-bridge, plus
+# mruby-bin-mruby for a standard `mruby` CLI entry. See
+# build_config/wasi-cli.rb for rationale.
+MRUBY_CONFIG_CLI := $(CURDIR)/build_config/wasi-cli.rb
+LIBMRUBY_CLI := $(MRUBY_DIR)/build/wasi-cli/lib/libmruby.a
+HOST_WASM_CLI := $(HOST_DIR)/mruby-cli.wasm
+DIST_DIR_CLI := $(CURDIR)/dist/mruby-wasm-cli
+
 CLANG := $(WASI_SDK_DIR)/bin/clang
 SYSROOT := $(WASI_SDK_DIR)/share/wasi-sysroot
 TARGET := wasm32-wasip1
 
-.PHONY: all download wasi-sdk mruby link serve test dist clean distclean
+.PHONY: all download wasi-sdk mruby link serve test dist clean distclean \
+        mruby-cli cli-link smoke-cli dist-cli
 
 all: link
 
@@ -153,9 +162,99 @@ dist: link
 	@echo "    import { createVM } from './vendor/mruby-js-bridge/index.js'"
 	@echo "    const vm = await createVM({ wasm: new URL('./vendor/mruby-js-bridge/mruby.wasm', import.meta.url).href })"
 
+# ---------------------------------------------------------------------------
+# `make cli-link` — build the CLI / wasmtime variant (mruby-bin-mruby
+# entry point, no JS bridge). Produces host/mruby-cli.wasm which can run
+# on wasmtime, wasmer, or any other preview1-compatible host.
+# ---------------------------------------------------------------------------
+
+mruby-cli: wasi-sdk $(MRUBY_DIR)/.git $(LIBMRUBY_CLI)
+
+$(LIBMRUBY_CLI):
+	cd $(MRUBY_DIR) && rake MRUBY_CONFIG=$(MRUBY_CONFIG_CLI)
+
+cli-link: mruby-cli $(HOST_WASM_CLI)
+
+# mruby-bin-mruby's CrossBuild output is bin/mruby (a wasm file in our
+# wasm32-wasip1 target). Copy it under a .wasm extension for clarity.
+$(HOST_WASM_CLI): $(LIBMRUBY_CLI) | $(HOST_DIR)
+	cp $(MRUBY_DIR)/build/wasi-cli/bin/mruby $(HOST_WASM_CLI)
+	@echo "Built $(HOST_WASM_CLI)"
+
+# `make smoke-cli` — sanity check that the CLI wasm boots and Ruby
+# basics (puts / Time / ENV / File / Dir / rand) work. Driven via Node's
+# built-in WASI module since wasmtime ≥36 dropped support for the
+# legacy exception bytecode that clang's SJLJ implementation emits
+# (see notes/known-issues in the gem README). Node's WASI accepts
+# this bytecode and is always available because the JS-host workflow
+# already requires Node.
+smoke-cli: cli-link
+	@node --experimental-wasi-unstable-preview1 host/run-cli-node.mjs 2>&1 \
+	  | grep -v ExperimentalWarning | grep -v "Use \`node"
+
+dist-cli: cli-link
+	@rm -rf $(DIST_DIR_CLI)
+	@mkdir -p $(DIST_DIR_CLI)
+	cp $(HOST_WASM_CLI) $(DIST_DIR_CLI)/mruby.wasm
+	cp $(GEM_DIR)/LICENSE $(DIST_DIR_CLI)/LICENSE
+	@printf '%s\n' \
+	  '# mruby-wasm-cli' \
+	  '' \
+	  'CLI / wasmtime build of upstream mruby compiled to `wasm32-wasip1`.' \
+	  'Sibling distribution to `mruby-js-bridge` — same upstream mruby and' \
+	  'the same `mruby-wasi-dir` / `mruby-wasi-env` mgems, but **without** the' \
+	  'JS bridge. Runs on any preview1-compatible WASI host (wasmtime,' \
+	  'wasmer, browser_wasi_shim, etc.).' \
+	  '' \
+	  '## Usage' \
+	  '' \
+	  '```bash' \
+	  '# Node has built-in WASI (always available, accepts our bytecode):' \
+	  'node --experimental-wasi-unstable-preview1 run-cli-node.mjs script.rb' \
+	  '' \
+	  '# wasmtime ≥36 currently cannot load this build because clang emits' \
+	  '# legacy exception bytecode (for SJLJ) that wasmtime dropped.' \
+	  '# Tracking issue: see toolchain notes in the gem README.' \
+	  '```' \
+	  '' \
+	  '`mruby.wasm` is `mruby-bin-mruby` compiled to wasm32-wasip1, so it' \
+	  'accepts the same CLI surface as native `mruby`: pass a script path' \
+	  'as argv, or pipe Ruby source on stdin.' \
+	  '' \
+	  '## What is included' \
+	  '' \
+	  '- upstream mruby 4.0.0' \
+	  '- `mruby-compiler` — runtime parsing/eval' \
+	  '- `mruby-io` — File / IO via wasi-libc' \
+	  '- `mruby-time` / `mruby-random` — Time.now, rand' \
+	  '- `mruby-wasi-dir` — Dir.entries / mkdir / rmdir / exist?' \
+	  '- `mruby-wasi-env` — ENV[] / each / keys / etc' \
+	  '' \
+	  '## Related projects' \
+	  '' \
+	  '- [`mruby-js-bridge`](../mruby-js-bridge/) — sibling package: same' \
+	  '  upstream mruby plus a `js_bridge` C primitive layer + JS adapter' \
+	  '  (`createVM` factory) for browser / Node hosts.' \
+	  '- [`ruby/ruby.wasm`](https://github.com/ruby/ruby.wasm) — official' \
+	  '  CRuby on WebAssembly. Heavier (full CRuby) but more compatible' \
+	  '  with CRuby gems.' \
+	  '- [`mrubyedge/mrubyedge`](https://github.com/mrubyedge/mrubyedge) —' \
+	  '  Rust reimplementation of the mruby VM, optimised for edge' \
+	  '  runtimes / `no_std` embedding. Smaller binary, subset of mruby' \
+	  '  behaviour. Bytecode produced by upstream `mrbc` runs on both' \
+	  '  this distribution and `mruby/edge`.' \
+	  > $(DIST_DIR_CLI)/README.md
+	@echo ""
+	@echo "Built dist/mruby-wasm-cli/ (version $(DIST_VERSION)):"
+	@ls -lh $(DIST_DIR_CLI)
+	@echo ""
+	@echo "Try it (Node has built-in WASI; wasmtime ≥36 currently can't load"
+	@echo "the legacy SJLJ exception bytecode clang emits — use Node for now):"
+	@echo "  node --experimental-wasi-unstable-preview1 host/run-cli-node.mjs path/to/script.rb"
+
 clean:
-	rm -rf $(MRUBY_DIR)/build/wasi
-	rm -f $(HOST_WASM)
+	rm -rf $(MRUBY_DIR)/build/wasi $(MRUBY_DIR)/build/wasi-cli
+	rm -f $(HOST_WASM) $(HOST_WASM_CLI)
 	rm -rf $(CURDIR)/dist
 
 distclean: clean

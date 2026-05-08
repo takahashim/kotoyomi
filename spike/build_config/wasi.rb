@@ -60,14 +60,20 @@ MRuby::CrossBuild.new("wasi") do |conf|
   # mrb_load_string requires the parser, which lives in mruby-compiler.
   conf.gem core: "mruby-compiler"
 
-  # mruby-io provides Kernel#puts (the io_puts implementation).  In
-  # mruby 4.0.0 the POSIX backend was extracted into a separate HAL gem
-  # (`hal-posix-io`), which mruby-io's mrbgem.rake auto-loads when the
-  # build host is POSIX-like.  io_hal.c references POSIX functions that
-  # wasi-libc doesn't ship (umask, flock, getpwnam, fork, ...); they
-  # stay as wasm imports and are no-op'd in adapter.js (kotoyomi never
-  # calls File.open / Process.spawn / IO.popen etc.).
+  # WASI HAL for mruby-io. Loaded BEFORE mruby-io so the latter's HAL
+  # auto-detector finds it (matches /^hal-.*-io$/ and skips its
+  # hal-posix-io fallback). hal-wasi-io routes all POSIX-level IO
+  # primitives through the HAL interface; unsupported ops (dup, fork,
+  # umask, flock, getpwnam, ...) return ENOSYS at the HAL level without
+  # leaving unresolved symbols at link time.
+  conf.gem File.expand_path("../mrbgem/hal-wasi-io", __dir__)
   conf.gem core: "mruby-io"
+
+  # mruby-io's main io.c directly calls a couple of POSIX functions
+  # (dup, waitpid) not routed through the HAL. mruby-wasi-stubs supplies
+  # ENOSYS-returning symbol stubs for those so the wasm links cleanly.
+  # Shared with the CLI build.
+  conf.gem File.expand_path("../mrbgem/mruby-wasi-stubs", __dir__)
 
   # mruby-method enables Object#method_missing dispatch (used by
   # JSBridge::Value to forward unknown method calls to JS).

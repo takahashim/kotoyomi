@@ -216,6 +216,26 @@ Expected: `167/167 tests pass (235 assertions)`. Exit code 0 on success,
 
 Tested against **mruby 4.0.0**.
 
+## Related projects
+
+This gem ships the **JS-host build** of upstream mruby on WebAssembly.
+A sibling **CLI / wasmtime build** (same upstream mruby, no JS bridge)
+lives under `spike/dist/mruby-wasm-cli/` — useful for sandboxing and
+running mruby scripts from `wasmtime` / `node:wasi` / other preview1
+hosts. Build it via `make cli-link` from the spike root.
+
+If you're doing mruby on WASM more broadly, see also:
+
+- **[ruby/ruby.wasm](https://github.com/ruby/ruby.wasm)** — official
+  CRuby on WebAssembly. Heavier (full CRuby) but more compatible with
+  CRuby gems. The structural inspiration for this gem; `createVM` is
+  shaped after the same factory-returning-VM-handle pattern.
+- **[mrubyedge/mrubyedge](https://github.com/mrubyedge/mrubyedge)** —
+  Rust reimplementation of the mruby VM, optimised for edge runtimes
+  / `no_std` embedding. Bytecode produced by upstream `mrbc` runs on
+  both that VM and the wasm built by this gem, so a `.mrb` you compile
+  once is portable across the two.
+
 ## License
 
 MIT (see `mrbgem.rake`).
