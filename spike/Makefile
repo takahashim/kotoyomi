@@ -115,12 +115,16 @@ DIST_VERSION := 0.0.0-dev
 dist: link
 	@rm -rf $(DIST_DIR)
 	@mkdir -p $(DIST_DIR)
-	cp $(GEM_DIR)/js/adapter.js       $(DIST_DIR)/adapter.js
-	cp $(GEM_DIR)/js/wasi-preview1.js $(DIST_DIR)/wasi-preview1.js
-	cp $(GEM_DIR)/js/debug.js         $(DIST_DIR)/debug.js
-	cp $(GEM_DIR)/README.md           $(DIST_DIR)/README.md
-	cp $(GEM_DIR)/LICENSE             $(DIST_DIR)/LICENSE
-	cp $(HOST_WASM)                   $(DIST_DIR)/mruby.wasm
+	# Copy every .js file in js/ — globbing avoids drift when new
+	# internal modules (_memory.js etc.) get added to the gem.
+	cp $(GEM_DIR)/js/*.js   $(DIST_DIR)/
+	cp $(GEM_DIR)/README.md $(DIST_DIR)/README.md
+	cp $(GEM_DIR)/LICENSE   $(DIST_DIR)/LICENSE
+	cp $(HOST_WASM)         $(DIST_DIR)/mruby.wasm
+	# package.json's `files` list is regenerated to match the actual
+	# .js files copied above.
+	$(eval JS_FILES := $(notdir $(wildcard $(GEM_DIR)/js/*.js)))
+	$(eval JS_FILES_JSON := $(shell printf '"%s", ' $(JS_FILES) "mruby.wasm" "README.md" "LICENSE" | sed 's/, $$//'))
 	@printf '%s\n' \
 	  '{' \
 	  '  "name": "mruby-js-bridge",' \
@@ -132,7 +136,7 @@ dist: link
 	  '    ".": "./adapter.js",' \
 	  '    "./wasm": "./mruby.wasm"' \
 	  '  },' \
-	  '  "files": ["adapter.js", "wasi-preview1.js", "debug.js", "mruby.wasm", "README.md", "LICENSE"],' \
+	  '  "files": [$(JS_FILES_JSON)],' \
 	  '  "license": "MIT",' \
 	  '  "engines": { "node": ">=18" }' \
 	  '}' \

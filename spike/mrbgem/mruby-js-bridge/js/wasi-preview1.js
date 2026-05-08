@@ -1,18 +1,25 @@
 // WASI preview1 implementation (in-memory) for mruby-js-bridge.
 //
-// Bundled with the gem as the default `createVM({ wasi })` impl. Users
-// who need richer features (OPFS bindings, multiple preopens, ...) can
-// swap this out for `@bjorn3/browser_wasi_shim` or any other preview1-
-// compatible implementation — see createVM()'s JSDoc in adapter.js.
+// `createWasiPreview1({ env, args, stdin, fs })` returns a fresh,
+// independent WASI implementation with its own state — env vars, argv,
+// stdin buffer, virtual filesystem, open-fd table. Used as the default
+// `wasi_snapshot_preview1` import object by adapter.js's `createVM`,
+// but also exportable for direct use.
 //
-// Each `createWasiPreview1({ env, args, stdin, fs })` call returns a
-// fresh, independent WASI implementation with its own state — env vars,
-// argv, stdin buffer, virtual filesystem, open-fd table. This is what
-// makes multi-VM coexistence possible.
+// Internal layout:
+//   - File / Directory: tree-VFS node classes (module-level)
+//   - constants: WASI errno / oflags / fdflags / filetype values
+//   - pure tree walkers: pathSegments / lookupFull / lookupNode /
+//     ensureParent / walkFiles / resolveRelative — pass `root` as arg
+//   - createFsFacade(root): Map-compatible facade over a Directory tree
+//   - createWasiPreview1(options): orchestrator that holds per-VM state
+//     (open fds, stdout buffer, instance ref) and returns the WASI
+//     imports object plus VFS handles.
 
 import { debug } from "./debug.js";
+import { createMemoryHelpers, decoder, encoder } from "./_memory.js";
 
-// --- Module-level types & constants ---------------------------------------
+// --- Module-level types ---------------------------------------------------
 
 /** A regular-file node in the VFS. Holds raw bytes; no path stored. */
 export class File {
@@ -28,8 +35,7 @@ export class Directory {
   }
 }
 
-const decoder = new TextDecoder("utf-8");
-const encoder = new TextEncoder();
+// --- Constants ------------------------------------------------------------
 
 // path_open oflags
 const O_CREAT     = 1;
@@ -58,6 +64,10 @@ const FILETYPE_REGULAR_FILE     = 4;
 const PREOPEN_FD = 3;
 const PREOPEN_PATH = "/";
 
+// --- Pure tree walkers ----------------------------------------------------
+// All take `root` (or another Directory) as an explicit argument so they
+// can be unit-tested independently of WASI imports / VM state.
+
 // Normalise an absolute path to an array of segments. Empty + "."
 // segments are dropped, ".." pops the previous segment.
 function pathSegments(absPath) {
@@ -74,98 +84,104 @@ function resolvePathToAbs(rel) {
   return (PREOPEN_PATH + "/" + rel).replace(/\/+/g, "/");
 }
 
-// --- Factory ---------------------------------------------------------------
+// Walk an absolute path. Returns one of:
+//   { parent, name, node }     — node is the resolved File|Directory or null if missing
+//   { parent: null, name: "", node: root }  — root itself
+//   null                       — traversal hit a File mid-path (caller maps to E_NOTDIR)
+function lookupFull(root, absPath) {
+  const segs = pathSegments(absPath);
+  if (segs.length === 0) return { parent: null, name: "", node: root };
+  let dir = root;
+  for (let i = 0; i < segs.length - 1; i++) {
+    const next = dir.entries[segs[i]];
+    if (next == null) return { parent: dir, name: segs[segs.length - 1], node: null };
+    if (!(next instanceof Directory)) return null;
+    dir = next;
+  }
+  const leaf = segs[segs.length - 1];
+  return { parent: dir, name: leaf, node: dir.entries[leaf] ?? null };
+}
+
+function lookupNode(root, absPath) {
+  const r = lookupFull(root, absPath);
+  return r ? r.node : null;
+}
+
+// Walk to (or create) the parent Directory of absPath. Auto-creates
+// intermediate Directory nodes; throws if any intermediate is a File.
+function ensureParent(root, absPath) {
+  const segs = pathSegments(absPath);
+  if (segs.length === 0) throw new Error("cannot ensure parent of root");
+  let dir = root;
+  for (let i = 0; i < segs.length - 1; i++) {
+    const name = segs[i];
+    let next = dir.entries[name];
+    if (next == null) {
+      next = new Directory();
+      dir.entries[name] = next;
+    } else if (!(next instanceof Directory)) {
+      throw new Error(`cannot create '${absPath}': '${name}' is a file`);
+    }
+    dir = next;
+  }
+  return { parent: dir, leaf: segs[segs.length - 1] };
+}
+
+// Walk all File leaves yielding [absolutePath, bytes] pairs.
+function* walkFiles(prefix, dir) {
+  for (const [name, node] of Object.entries(dir.entries)) {
+    const path = prefix + "/" + name;
+    if (node instanceof File) yield [path, node.data];
+    else yield* walkFiles(path, node);
+  }
+}
+
+// Walk relPath from baseDir; "." skipped, ".." treated as "stay put"
+// (we don't track parent pointers — good enough for readdir's fstatat).
+function resolveRelative(baseDir, relPath) {
+  const segs = relPath.split("/").filter((s) => s.length > 0 && s !== ".");
+  let node = baseDir;
+  for (const seg of segs) {
+    if (seg === "..") continue;
+    if (!(node instanceof Directory)) return null;
+    node = node.entries[seg] ?? null;
+    if (!node) return null;
+  }
+  return node;
+}
+
+// --- Pure record writers --------------------------------------------------
+
+// Write a 64-byte WASI filestat record. Only fields we care about
+// (filetype, nlink, size) are filled; timestamps and dev/ino stay 0.
+function writeFilestat(view, ptr, filetype, size) {
+  for (let i = 0; i < 64; i++) view.setUint8(ptr + i, 0);
+  view.setUint8(ptr + 16, filetype);
+  view.setBigUint64(ptr + 24, 1n, true);
+  view.setBigUint64(ptr + 32, BigInt(size), true);
+}
+
+// Sum the byte length across an iovec array (uint32 length lives at
+// offset 4 of each 8-byte slot — ptr at offset 0, len at offset 4).
+function iovsTotalLen(view, iovsPtr, iovsLen) {
+  let total = 0;
+  for (let i = 0; i < iovsLen; i++) total += view.getUint32(iovsPtr + i * 8 + 4, true);
+  return total;
+}
+
+// --- Public: fs Map facade factory ----------------------------------------
+
 /**
- * Build a fresh WASI preview1 implementation. Each call gets independent
- * state (env, args, stdin, fs, open-fd table, stdout buffering).
- *
- * @param {object} [options]
- * @param {Record<string, string>} [options.env]   initial environ
- * @param {string[]} [options.args]                initial argv (defaults to ["mruby-js-bridge"])
- * @param {string|Uint8Array} [options.stdin]      initial stdin payload
- * @param {Directory} [options.fs]                 initial root Directory; defaults to empty
- *
- * @returns {{
- *   imports: object,                              // wasi_snapshot_preview1.* imports
- *   bindInstance: (inst: WebAssembly.Instance) => void,
- *   env: Record<string, string>,                  // mutable; mutations after _start don't reach wasi-libc's environ cache
- *   args: string[],
- *   stdin: { bytes: Uint8Array, pushText: (s: string) => void },
- *   fs: object,                                   // Map-compatible facade (set/get/has/delete/iteration/clear/size/populate/root)
- * }}
+ * Build a Map-compatible facade over a `Directory` tree. Exposes
+ * set / get / has / delete / iteration / clear / size / Symbol.iterator
+ * plus `populate(dir)` and `root`. Iteration yields only File leaves
+ * in tree-traversal order. `set` auto-creates intermediate Directory
+ * nodes on demand.
  */
-export function createWasiPreview1(options = {}) {
-  const env = { ...(options.env ?? {}) };
-  const args = [...(options.args ?? ["mruby-js-bridge"])];
-  const stdin = makeStdin(options.stdin);
-  const root = options.fs instanceof Directory ? options.fs : new Directory();
-
-  let nextFileFd = 4;
-  // fd → { type: 'file', path, pos, append } | { type: 'dir', node }
-  const openFiles = new Map();
-  const stdoutBuffer = [];
-  let instance = null;
-
-  // --- Tree walkers (close over `root`) ----------------------------------
-  function lookupFull(absPath) {
-    const segs = pathSegments(absPath);
-    if (segs.length === 0) return { parent: null, name: "", node: root };
-    let dir = root;
-    for (let i = 0; i < segs.length - 1; i++) {
-      const next = dir.entries[segs[i]];
-      if (next == null) return { parent: dir, name: segs[segs.length - 1], node: null };
-      if (!(next instanceof Directory)) return null;
-      dir = next;
-    }
-    const leaf = segs[segs.length - 1];
-    return { parent: dir, name: leaf, node: dir.entries[leaf] ?? null };
-  }
-  const lookupNode = (absPath) => {
-    const r = lookupFull(absPath);
-    return r ? r.node : null;
-  };
-  function ensureParent(absPath) {
-    const segs = pathSegments(absPath);
-    if (segs.length === 0) throw new Error("cannot ensure parent of root");
-    let dir = root;
-    for (let i = 0; i < segs.length - 1; i++) {
-      const name = segs[i];
-      let next = dir.entries[name];
-      if (next == null) {
-        next = new Directory();
-        dir.entries[name] = next;
-      } else if (!(next instanceof Directory)) {
-        throw new Error(`cannot create '${absPath}': '${name}' is a file`);
-      }
-      dir = next;
-    }
-    return { parent: dir, leaf: segs[segs.length - 1] };
-  }
-  function* walkFiles(prefix, dir) {
-    for (const [name, node] of Object.entries(dir.entries)) {
-      const path = prefix + "/" + name;
-      if (node instanceof File) yield [path, node.data];
-      else yield* walkFiles(path, node);
-    }
-  }
-  // Walk relPath from baseDir; "." skipped, ".." treated as "stay put"
-  // (we don't track parent pointers — good enough for readdir's fstatat).
-  function resolveRelative(baseDir, relPath) {
-    const segs = relPath.split("/").filter((s) => s.length > 0 && s !== ".");
-    let node = baseDir;
-    for (const seg of segs) {
-      if (seg === "..") continue;
-      if (!(node instanceof Directory)) return null;
-      node = node.entries[seg] ?? null;
-      if (!node) return null;
-    }
-    return node;
-  }
-
-  // --- Map-compatible fs facade ------------------------------------------
-  const fs = {
+export function createFsFacade(root) {
+  return {
     set(path, bytes) {
-      const { parent, leaf } = ensureParent(path);
+      const { parent, leaf } = ensureParent(root, path);
       const existing = parent.entries[leaf];
       if (existing instanceof Directory) {
         throw new Error(`cannot set '${path}': it's a directory`);
@@ -175,14 +191,14 @@ export function createWasiPreview1(options = {}) {
       return this;
     },
     get(path) {
-      const node = lookupNode(path);
+      const node = lookupNode(root, path);
       return node instanceof File ? node.data : undefined;
     },
     has(path) {
-      return lookupNode(path) instanceof File;
+      return lookupNode(root, path) instanceof File;
     },
     delete(path) {
-      const r = lookupFull(path);
+      const r = lookupFull(root, path);
       if (!r || !(r.node instanceof File) || !r.parent) return false;
       delete r.parent.entries[r.name];
       return true;
@@ -199,23 +215,59 @@ export function createWasiPreview1(options = {}) {
     },
     get root() { return root; },
   };
+}
 
-  // --- Internal helpers --------------------------------------------------
-  function readUtf8(ptr, len) {
-    const memory = instance.exports.memory;
-    return decoder.decode(new Uint8Array(memory.buffer, ptr, len));
-  }
-  function writeFilestat(view, ptr, filetype, size) {
-    for (let i = 0; i < 64; i++) view.setUint8(ptr + i, 0);
-    view.setUint8(ptr + 16, filetype);
-    view.setBigUint64(ptr + 24, 1n, true);
-    view.setBigUint64(ptr + 32, BigInt(size), true);
-  }
-  function iovsTotalLen(view, iovsPtr, iovsLen) {
-    let total = 0;
-    for (let i = 0; i < iovsLen; i++) total += view.getUint32(iovsPtr + i * 8 + 4, true);
-    return total;
-  }
+// --- Stdin helper (module-level) ------------------------------------------
+
+function makeStdin(initial) {
+  let bytes;
+  if (initial == null) bytes = new Uint8Array(0);
+  else if (typeof initial === "string") bytes = encoder.encode(initial);
+  else if (initial instanceof Uint8Array) bytes = initial;
+  else throw new TypeError("stdin must be a string, Uint8Array, or undefined");
+  return {
+    bytes,
+    pushText(text) {
+      const add = encoder.encode(text);
+      const merged = new Uint8Array(this.bytes.length + add.length);
+      merged.set(this.bytes);
+      merged.set(add, this.bytes.length);
+      this.bytes = merged;
+    },
+  };
+}
+
+// --- WASI factory ---------------------------------------------------------
+
+/**
+ * Build a fresh WASI preview1 implementation. Each call gets independent
+ * state (env, args, stdin, fs, open-fd table, stdout buffering).
+ *
+ * @returns {{
+ *   imports: object,
+ *   bindInstance: (inst: WebAssembly.Instance) => void,
+ *   env: Record<string, string>,
+ *   args: string[],
+ *   stdin: { bytes: Uint8Array, pushText: (s: string) => void },
+ *   fs: object,
+ * }}
+ */
+export function createWasiPreview1(options = {}) {
+  const env = { ...(options.env ?? {}) };
+  const args = [...(options.args ?? ["mruby-js-bridge"])];
+  const stdin = makeStdin(options.stdin);
+  const root = options.fs instanceof Directory ? options.fs : new Directory();
+  const fs = createFsFacade(root);
+
+  let nextFileFd = 4;
+  // fd → { type: 'file', path, pos, append } | { type: 'dir', node }
+  const openFiles = new Map();
+  const stdoutBuffer = [];
+  let instance = null;
+
+  const { readUtf8 } = createMemoryHelpers(() => instance);
+
+  // --- IO helpers (close over fs, stdin, openFiles, stdoutBuffer) --------
   function writeToOpenFile(f, view, memory, iovsPtr, iovsLen) {
     const data = fs.get(f.path);
     const needed = iovsTotalLen(view, iovsPtr, iovsLen);
@@ -424,7 +476,7 @@ export function createWasiPreview1(options = {}) {
       const excl   = !!(oflags & O_EXCL);
       const trunc  = !!(oflags & O_TRUNC);
       const append = !!(fdflags & FD_APPEND);
-      const node = lookupNode(fullPath);
+      const node = lookupNode(root, fullPath);
 
       if (directory) {
         if (!node) return E_NOENT;
@@ -561,7 +613,7 @@ export function createWasiPreview1(options = {}) {
     path_unlink_file(dirfd, pathPtr, pathLen) {
       if (dirfd !== PREOPEN_FD) return E_BADF;
       const fullPath = resolvePathToAbs(readUtf8(pathPtr, pathLen));
-      const node = lookupNode(fullPath);
+      const node = lookupNode(root, fullPath);
       if (!node) return E_NOENT;
       if (node instanceof Directory) return E_ISDIR;
       fs.delete(fullPath);
@@ -587,7 +639,7 @@ export function createWasiPreview1(options = {}) {
     path_remove_directory(dirfd, pathPtr, pathLen) {
       if (dirfd !== PREOPEN_FD) return E_BADF;
       const fullPath = resolvePathToAbs(readUtf8(pathPtr, pathLen));
-      const r = lookupFull(fullPath);
+      const r = lookupFull(root, fullPath);
       if (!r || r.node == null) return E_NOENT;
       if (!(r.node instanceof Directory)) return E_NOTDIR;
       if (!r.parent) return E_INVAL;
@@ -626,25 +678,5 @@ export function createWasiPreview1(options = {}) {
     args,
     stdin,
     fs,
-  };
-}
-
-// Helper: turn the `stdin` option (string | Uint8Array | undefined) into
-// the standard { bytes, pushText } shape exposed on the VM.
-function makeStdin(initial) {
-  let bytes;
-  if (initial == null) bytes = new Uint8Array(0);
-  else if (typeof initial === "string") bytes = encoder.encode(initial);
-  else if (initial instanceof Uint8Array) bytes = initial;
-  else throw new TypeError("stdin must be a string, Uint8Array, or undefined");
-  return {
-    bytes,
-    pushText(text) {
-      const add = encoder.encode(text);
-      const merged = new Uint8Array(this.bytes.length + add.length);
-      merged.set(this.bytes);
-      merged.set(add, this.bytes.length);
-      this.bytes = merged;
-    },
   };
 }

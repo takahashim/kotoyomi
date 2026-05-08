@@ -18,10 +18,17 @@
 // handle table, separate WASI state. Multiple VMs can coexist in one
 // process (useful for tests, sandboxing, hot reload).
 //
-// The default WASI preview1 implementation lives in `./wasi-preview1.js`.
-// To swap it out (e.g. `@bjorn3/browser_wasi_shim`), pass `options.wasi`.
+// Internal layout:
+//   - createHandleTable():        per-VM handle table (alloc/get/release/count)
+//   - createErrorSlot():          per-VM JS exception capture
+//   - inspectValue(v):            pure debug-string formatter
+//   - createJsBridgeImports({…}): builds the 25 js_bridge.* methods
+//   - createVM(options):          orchestrator — creates state,
+//                                  builds imports, instantiates wasm,
+//                                  runs _start, returns VM handle.
 
 import { createWasiPreview1, Directory, File } from "./wasi-preview1.js";
+import { createMemoryHelpers, encoder } from "./_memory.js";
 import { debug } from "./debug.js";
 
 export { Directory, File, debug };
@@ -33,15 +40,200 @@ export { Directory, File, debug };
 // kotoyomi spike never exercises Process.spawn / IO.popen / umask
 // etc. so this is safe in practice.
 //
-// These imports are wasm-binary-shape-dependent (the linker decides
-// which to require), not VM-state-dependent, so a single shared object
-// is reused across every createVM() call.
+// Pair with `spike/stubs/wasi-shims.h` — both lists must stay in sync;
+// add a new symbol there too whenever a new POSIX function is needed
+// at compile time.
 const POSIX_STUB_NAMES = [
   "dup", "dup2", "waitpid", "pipe", "fork", "execl",
   "umask", "flock", "getpwnam",
 ];
 const envImports = {};
 for (const name of POSIX_STUB_NAMES) envImports[name] = (..._args) => -1;
+
+// --- Pure helpers ---------------------------------------------------------
+
+// Best-effort debug string for a JS value. JSON for plain objects so
+// `p value` shows structure; tag DOM nodes / functions specially since
+// JSON.stringify drops them.
+function inspectValue(v) {
+  if (v === null) return "null";
+  if (v === undefined) return "undefined";
+  const t = typeof v;
+  if (t === "string") return JSON.stringify(v);
+  if (t === "number" || t === "boolean") return String(v);
+  if (t === "function") return `#<JS function ${v.name || "(anonymous)"}>`;
+  if (t === "symbol") return v.toString();
+  if (v && typeof v.nodeType === "number" && typeof v.nodeName === "string") {
+    return `#<JS ${v.nodeName.toLowerCase()}${v.id ? ` id=${JSON.stringify(v.id)}` : ""}>`;
+  }
+  try { return JSON.stringify(v); }
+  catch (_err) { return `#<JS ${Object.prototype.toString.call(v)}>`; }
+}
+
+// --- Per-VM state factories -----------------------------------------------
+
+/** Per-VM handle table. Index 0 is reserved as a "null" sentinel.
+ *  Allocations recycle from a free list to keep handle numbers small. */
+function createHandleTable() {
+  const handles = [null];
+  const free = [];
+  return {
+    alloc(value) {
+      if (free.length > 0) {
+        const h = free.pop();
+        handles[h] = value;
+        return h;
+      }
+      handles.push(value);
+      return handles.length - 1;
+    },
+    get(h) { return handles[h]; },
+    release(h) {
+      if (h === 0) return;
+      if (handles[h] === null) return;
+      handles[h] = null;
+      free.push(h);
+    },
+    count() { return handles.length - 1 - free.length; },
+    isNull(h) { return h === 0 || handles[h] == null; },
+  };
+}
+
+/** Per-VM "latest JS exception" slot. The C side calls js_take_error()
+ *  right after each potentially-throwing op; if a non-null Error is
+ *  pending, it becomes a JSBridge::Error on the Ruby side. Non-Error
+ *  throws (`throw "string"`, `throw 42`, ...) are wrapped so callers
+ *  always get an object with `.message`. */
+function createErrorSlot() {
+  let pending = null;
+  return {
+    capture(err) { pending = err; },
+    take() {
+      if (pending == null) return null;
+      let err = pending;
+      pending = null;
+      if (!(err instanceof Error)) err = new Error(String(err));
+      return err;
+    },
+  };
+}
+
+/** Build the 25 `js_bridge.*` import methods, closing over the supplied
+ *  per-VM state. Splitting this out from createVM means the imports can
+ *  be unit-tested or rebuilt independently of the wasm fetch/instantiate
+ *  cycle. */
+function createJsBridgeImports({ handles, errorSlot, getInstance }) {
+  const { readUtf8, writeUtf8, readHandleArray } = createMemoryHelpers(getInstance);
+  return {
+    // Evaluate JS source and return a handle to the resulting value.
+    // NOTE: uses `Function` constructor for simplicity; not a sandbox.
+    js_eval(ptr, len) {
+      const src = readUtf8(ptr, len);
+      let result;
+      try { result = new Function(`return (${src});`)(); }
+      catch (err) { errorSlot.capture(err); return 0; }
+      return handles.alloc(result);
+    },
+    js_global() { return handles.alloc(globalThis); },
+    js_release(h) {
+      if (debug.trace && h !== 0 && handles.get(h) !== null) {
+        console.log(`[trace] js_release h=${h} (was ${typeof handles.get(h)})`);
+      }
+      handles.release(h);
+    },
+    js_get(h, keyPtr, keyLen) {
+      const key = readUtf8(keyPtr, keyLen);
+      const obj = handles.get(h);
+      if (obj == null) {
+        errorSlot.capture(new TypeError(`cannot read property '${key}' of ${obj}`));
+        return 0;
+      }
+      try { return handles.alloc(obj[key]); }
+      catch (err) { errorSlot.capture(err); return 0; }
+    },
+    js_set(h, keyPtr, keyLen, valueHandle) {
+      const key = readUtf8(keyPtr, keyLen);
+      const obj = handles.get(h);
+      if (obj == null) {
+        errorSlot.capture(new TypeError(`cannot set property '${key}' of ${obj}`));
+        return;
+      }
+      try { obj[key] = handles.get(valueHandle); }
+      catch (err) { errorSlot.capture(err); }
+    },
+    js_call(h, methodPtr, methodLen, argsPtr, argCount) {
+      const method = readUtf8(methodPtr, methodLen);
+      const obj = handles.get(h);
+      if (obj == null) {
+        errorSlot.capture(new TypeError(`cannot call '${method}' on ${obj}`));
+        return 0;
+      }
+      const argHandles = readHandleArray(argsPtr, argCount);
+      const args = argHandles.map((a) => handles.get(a));
+      try { return handles.alloc(obj[method].apply(obj, args)); }
+      catch (err) { errorSlot.capture(err); return 0; }
+    },
+    js_new(h, argsPtr, argCount) {
+      const ctor = handles.get(h);
+      if (typeof ctor !== "function") {
+        errorSlot.capture(new TypeError(`handle ${h} is not a constructor`));
+        return 0;
+      }
+      const argHandles = readHandleArray(argsPtr, argCount);
+      const args = argHandles.map((a) => handles.get(a));
+      try { return handles.alloc(new ctor(...args)); }
+      catch (err) { errorSlot.capture(err); return 0; }
+    },
+    js_handle_count() { return handles.count(); },
+    js_take_error() {
+      const err = errorSlot.take();
+      return err == null ? 0 : handles.alloc(err);
+    },
+    js_to_string_len(h) {
+      const v = handles.get(h);
+      return v == null ? 0 : encoder.encode(String(v)).length;
+    },
+    js_to_string_copy(h, ptr, bufLen) {
+      const v = handles.get(h);
+      if (v == null) return;
+      writeUtf8(String(v), ptr, bufLen);
+    },
+    js_from_string(ptr, len) { return handles.alloc(readUtf8(ptr, len)); },
+    js_to_int(h) {
+      const v = handles.get(h);
+      return v == null ? 0 : (v | 0);
+    },
+    js_from_int(v) { return handles.alloc(v); },
+    js_to_float(h) {
+      const v = handles.get(h);
+      return v == null ? 0 : Number(v);
+    },
+    js_from_float(v) { return handles.alloc(v); },
+    js_is_null(h) { return handles.isNull(h) ? 1 : 0; },
+    js_strict_equal(a, b) { return handles.get(a) === handles.get(b) ? 1 : 0; },
+    js_typeof_len(h) { return encoder.encode(typeof handles.get(h)).length; },
+    js_typeof_copy(h, ptr, bufLen) { writeUtf8(typeof handles.get(h), ptr, bufLen); },
+    js_inspect_len(h) { return encoder.encode(inspectValue(handles.get(h))).length; },
+    js_inspect_copy(h, ptr, bufLen) { writeUtf8(inspectValue(handles.get(h)), ptr, bufLen); },
+    js_instanceof(instanceH, ctorH) {
+      const ctor = handles.get(ctorH);
+      if (typeof ctor !== "function") return 0;
+      try { return handles.get(instanceH) instanceof ctor ? 1 : 0; }
+      catch (_err) { return 0; }
+    },
+    js_make_callback(callbackId) {
+      const wrapper = (...args) => {
+        if (debug.trace) console.log(`[trace] wrapper id=${callbackId} fired with`, args);
+        const argsHandle = handles.alloc(args);
+        try { getInstance().exports.js_bridge_invoke_proc(callbackId, argsHandle); }
+        finally { handles.release(argsHandle); }
+      };
+      return handles.alloc(wrapper);
+    },
+  };
+}
+
+// --- Public factory -------------------------------------------------------
 
 /**
  * Instantiate a fresh mruby VM and return a handle for driving it.
@@ -61,15 +253,21 @@ for (const name of POSIX_STUB_NAMES) envImports[name] = (..._args) => -1;
  * @returns {Promise<{
  *   instance: WebAssembly.Instance,
  *   eval: (source: string) => number,           // 0 on success, 1 on parse/runtime error
- *   fs: object,                                  // Map-compatible facade
- *   env: Record<string, string>,
- *   args: string[],
- *   stdin: { bytes: Uint8Array, pushText: (s: string) => void },
  *   alloc: (value: any) => number,               // power-user handle table
  *   get: (handle: number) => any,
  *   release: (handle: number) => void,
  *   handleCount: () => number,
+ *   fs?: object,                                 // present iff bundled WASI is in use
+ *   env?: Record<string, string>,                // present iff bundled WASI is in use
+ *   args?: string[],                             // present iff bundled WASI is in use
+ *   stdin?: { bytes: Uint8Array, pushText: (s: string) => void },  // present iff bundled WASI is in use
  * }>}
+ *
+ * Note: when `options.wasi` is provided, the returned VM does NOT include
+ * `fs` / `env` / `args` / `stdin` — those keys describe the bundled
+ * WASI preview1's state, and the caller's WASI replacement owns its own
+ * state instead. This keeps the typed surface of the returned object
+ * consistent with which WASI is actually backing it.
  *
  * Swap WASI for `@bjorn3/browser_wasi_shim`:
  *
@@ -88,184 +286,13 @@ export async function createVM(options = {}) {
   const { wasm, onStart } = options;
   if (!wasm) throw new Error("createVM: options.wasm (URL to mruby.wasm) is required");
 
-  // --- Per-VM state ------------------------------------------------------
-  // Handle table for JS values exposed to Ruby. Index 0 is the null
-  // sentinel; allocations recycle from a free list.
-  const handles = [null];
-  const free = [];
-  function alloc(value) {
-    if (free.length > 0) {
-      const h = free.pop();
-      handles[h] = value;
-      return h;
-    }
-    handles.push(value);
-    return handles.length - 1;
-  }
-  function get(h) { return handles[h]; }
-  function release(h) {
-    if (h === 0) return;
-    if (handles[h] === null) return;
-    handles[h] = null;
-    free.push(h);
-  }
-
+  const handles = createHandleTable();
+  const errorSlot = createErrorSlot();
   let instance = null;
-  const decoder = new TextDecoder("utf-8");
-  const encoder = new TextEncoder();
-  let pendingError = null;
-  function captureError(err) { pendingError = err; }
+  const getInstance = () => instance;
 
-  // --- Memory helpers (close over `instance`) ----------------------------
-  function readUtf8(ptr, len) {
-    const memory = instance.exports.memory;
-    return decoder.decode(new Uint8Array(memory.buffer, ptr, len));
-  }
-  function writeUtf8(s, ptr, maxLen) {
-    const memory = instance.exports.memory;
-    const view = new Uint8Array(memory.buffer, ptr, maxLen);
-    const encoded = encoder.encode(s);
-    const n = Math.min(encoded.length, maxLen);
-    view.set(encoded.subarray(0, n));
-    return n;
-  }
-  function readHandleArray(ptr, count) {
-    if (count <= 0) return [];
-    const view = new DataView(instance.exports.memory.buffer);
-    const out = new Array(count);
-    for (let i = 0; i < count; i++) out[i] = view.getInt32(ptr + i * 4, true);
-    return out;
-  }
+  const jsBridgeImports = createJsBridgeImports({ handles, errorSlot, getInstance });
 
-  function inspectValue(v) {
-    if (v === null) return "null";
-    if (v === undefined) return "undefined";
-    const t = typeof v;
-    if (t === "string") return JSON.stringify(v);
-    if (t === "number" || t === "boolean") return String(v);
-    if (t === "function") return `#<JS function ${v.name || "(anonymous)"}>`;
-    if (t === "symbol") return v.toString();
-    if (v && typeof v.nodeType === "number" && typeof v.nodeName === "string") {
-      return `#<JS ${v.nodeName.toLowerCase()}${v.id ? ` id=${JSON.stringify(v.id)}` : ""}>`;
-    }
-    try { return JSON.stringify(v); }
-    catch (_err) { return `#<JS ${Object.prototype.toString.call(v)}>`; }
-  }
-
-  // --- js_bridge.* imports (close over per-VM handle table) ---------------
-  const jsBridgeImports = {
-    js_eval(ptr, len) {
-      const src = readUtf8(ptr, len);
-      let result;
-      try { result = new Function(`return (${src});`)(); }
-      catch (err) { captureError(err); return 0; }
-      return alloc(result);
-    },
-    js_global() { return alloc(globalThis); },
-    js_release(h) {
-      if (debug.trace && h !== 0 && handles[h] !== null) {
-        console.log(`[trace] js_release h=${h} (was ${typeof handles[h]})`);
-      }
-      release(h);
-    },
-    js_get(h, keyPtr, keyLen) {
-      const key = readUtf8(keyPtr, keyLen);
-      const obj = get(h);
-      if (obj == null) {
-        captureError(new TypeError(`cannot read property '${key}' of ${obj}`));
-        return 0;
-      }
-      try { return alloc(obj[key]); }
-      catch (err) { captureError(err); return 0; }
-    },
-    js_set(h, keyPtr, keyLen, valueHandle) {
-      const key = readUtf8(keyPtr, keyLen);
-      const obj = get(h);
-      if (obj == null) {
-        captureError(new TypeError(`cannot set property '${key}' of ${obj}`));
-        return;
-      }
-      try { obj[key] = get(valueHandle); }
-      catch (err) { captureError(err); }
-    },
-    js_call(h, methodPtr, methodLen, argsPtr, argCount) {
-      const method = readUtf8(methodPtr, methodLen);
-      const obj = get(h);
-      if (obj == null) {
-        captureError(new TypeError(`cannot call '${method}' on ${obj}`));
-        return 0;
-      }
-      const argHandles = readHandleArray(argsPtr, argCount);
-      const args = argHandles.map(get);
-      try { return alloc(obj[method].apply(obj, args)); }
-      catch (err) { captureError(err); return 0; }
-    },
-    js_new(h, argsPtr, argCount) {
-      const ctor = get(h);
-      if (typeof ctor !== "function") {
-        captureError(new TypeError(`handle ${h} is not a constructor`));
-        return 0;
-      }
-      const argHandles = readHandleArray(argsPtr, argCount);
-      const args = argHandles.map(get);
-      try { return alloc(new ctor(...args)); }
-      catch (err) { captureError(err); return 0; }
-    },
-    js_handle_count() { return handles.length - 1 - free.length; },
-    js_take_error() {
-      if (pendingError == null) return 0;
-      let err = pendingError;
-      pendingError = null;
-      if (!(err instanceof Error)) err = new Error(String(err));
-      return alloc(err);
-    },
-    js_to_string_len(h) {
-      const v = get(h);
-      return v == null ? 0 : encoder.encode(String(v)).length;
-    },
-    js_to_string_copy(h, ptr, bufLen) {
-      const v = get(h);
-      if (v == null) return;
-      writeUtf8(String(v), ptr, bufLen);
-    },
-    js_from_string(ptr, len) { return alloc(readUtf8(ptr, len)); },
-    js_to_int(h) {
-      const v = get(h);
-      return v == null ? 0 : (v | 0);
-    },
-    js_from_int(v) { return alloc(v); },
-    js_to_float(h) {
-      const v = get(h);
-      return v == null ? 0 : Number(v);
-    },
-    js_from_float(v) { return alloc(v); },
-    js_is_null(h) { return (h === 0 || handles[h] == null) ? 1 : 0; },
-    js_strict_equal(a, b) { return get(a) === get(b) ? 1 : 0; },
-    js_typeof_len(h) { return encoder.encode(typeof get(h)).length; },
-    js_typeof_copy(h, ptr, bufLen) { writeUtf8(typeof get(h), ptr, bufLen); },
-    js_inspect_len(h) { return encoder.encode(inspectValue(get(h))).length; },
-    js_inspect_copy(h, ptr, bufLen) { writeUtf8(inspectValue(get(h)), ptr, bufLen); },
-    js_instanceof(instanceH, ctorH) {
-      const ctor = get(ctorH);
-      if (typeof ctor !== "function") return 0;
-      try { return get(instanceH) instanceof ctor ? 1 : 0; }
-      catch (_err) { return 0; }
-    },
-    js_make_callback(callbackId) {
-      const wrapper = (...args) => {
-        if (debug.trace) console.log(`[trace] wrapper id=${callbackId} fired with`, args);
-        const argsHandle = alloc(args);
-        try { instance.exports.js_bridge_invoke_proc(callbackId, argsHandle); }
-        finally { release(argsHandle); }
-      };
-      return alloc(wrapper);
-    },
-  };
-
-  // --- WASI ------------------------------------------------------------
-  // Either the caller passed a custom `wasi` object (we use it as-is), or
-  // we build a fresh wasi-preview1 implementation seeded from the same
-  // options.
   const customWasi = options.wasi;
   const wasiImpl = customWasi ? null : createWasiPreview1({
     env: options.env,
@@ -275,7 +302,6 @@ export async function createVM(options = {}) {
   });
   const wasiImports = customWasi ?? wasiImpl.imports;
 
-  // --- Instantiate -------------------------------------------------------
   const response = await fetch(wasm);
   if (!response.ok) {
     throw new Error(`createVM: failed to fetch ${wasm}: ${response.status}`);
@@ -297,21 +323,29 @@ export async function createVM(options = {}) {
     }
   }
 
-  // --- Build VM handle ---------------------------------------------------
   function evalRuby(source) {
-    const handle = alloc(source);
+    const handle = handles.alloc(source);
     try { return instance.exports.js_bridge_eval_handle(handle); }
-    finally { release(handle); }
+    finally { handles.release(handle); }
   }
 
-  return {
+  const vm = {
     instance,
     eval: evalRuby,
-    fs:    customWasi ? undefined : wasiImpl.fs,
-    env:   customWasi ? undefined : wasiImpl.env,
-    args:  customWasi ? undefined : wasiImpl.args,
-    stdin: customWasi ? undefined : wasiImpl.stdin,
-    alloc, get, release,
-    handleCount: () => handles.length - 1 - free.length,
+    alloc: handles.alloc,
+    get: handles.get,
+    release: handles.release,
+    handleCount: () => handles.count(),
   };
+  // Expose VFS state only when we own it. When the caller passed their
+  // own `wasi`, that object controls fs/env/args/stdin, so omitting
+  // these keys keeps the returned shape honest (vs. setting them to
+  // undefined, which is harder to typecheck and easier to misread).
+  if (wasiImpl) {
+    vm.fs = wasiImpl.fs;
+    vm.env = wasiImpl.env;
+    vm.args = wasiImpl.args;
+    vm.stdin = wasiImpl.stdin;
+  }
+  return vm;
 }

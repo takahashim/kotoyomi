@@ -8,7 +8,7 @@
     ".": "./adapter.js",
     "./wasm": "./mruby.wasm"
   },
-  "files": ["adapter.js", "wasi-preview1.js", "debug.js", "mruby.wasm", "README.md", "LICENSE"],
+  "files": ["_memory.js", "adapter.js", "debug.js", "wasi-preview1.js", "mruby.wasm", "README.md", "LICENSE"],
   "license": "MIT",
   "engines": { "node": ">=18" }
 }
