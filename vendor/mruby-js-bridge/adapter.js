@@ -54,6 +54,47 @@ function captureError(err) {
   pendingError = err;
 }
 
+// --- WASI configuration ----------------------------------------------------
+// Populate these BEFORE calling boot() to expose env vars and a virtual
+// filesystem to mruby:
+//
+//   import { boot, env, fs } from "<gem>/js/adapter.js";
+//   env.HOME = "/home/user";
+//   env.TZ   = "UTC";
+//   fs.set("/data/poem.vtt", new TextEncoder().encode("WEBVTT\n..."));
+//   await boot("./mruby.wasm");
+//   evalRuby('puts ENV["TZ"];  puts File.read("/data/poem.vtt")');
+//
+// The VFS is read-only and lives entirely in memory; ideal for shipping
+// fixed assets with the wasm. There is exactly one preopen at "/" — every
+// path lookup is relative to that.
+
+/** Environment variables visible to Ruby's `ENV` / wasi-libc's getenv. */
+export const env = {};
+
+/** Virtual read-only filesystem. Map of absolute path → Uint8Array. */
+export const fs = new Map();
+
+const PREOPEN_FD = 3;
+const PREOPEN_PATH = "/";
+let nextFileFd = 4;
+const openFiles = new Map(); // fd → { path, pos }
+
+function resolvePath(rel) {
+  // wasi-libc gives paths relative to the preopen dir. Stick the
+  // preopen prefix back on and collapse any "//" to "/".
+  return (PREOPEN_PATH + "/" + rel).replace(/\/+/g, "/");
+}
+
+// Write a 64-byte WASI filestat record. Only fields we care about (size,
+// filetype, nlink) are filled; timestamps and dev/ino stay 0.
+function writeFilestat(view, ptr, size) {
+  for (let i = 0; i < 64; i++) view.setUint8(ptr + i, 0);
+  view.setUint8(ptr + 16, 4);                            // filetype = regular_file
+  view.setBigUint64(ptr + 24, 1n, true);                 // nlink
+  view.setBigUint64(ptr + 32, BigInt(size), true);       // size
+}
+
 function readUtf8(ptr, len) {
   const memory = instance.exports.memory;
   const bytes = new Uint8Array(memory.buffer, ptr, len);
@@ -340,50 +381,204 @@ const wasiImports = {
     view.setUint32(nwrittenPtr, total, true);
     return 0;
   },
-  fd_close(_fd) { return 0; },
-  fd_seek(_fd, _ol, _oh, _w, _np) { return 0; },
+  fd_close(fd) {
+    if (openFiles.has(fd)) openFiles.delete(fd);
+    return 0;
+  },
+  fd_seek(fd, offset /* BigInt */, whence, newOffsetPtr) {
+    const f = openFiles.get(fd);
+    if (!f) return 8; // EBADF — stdio not seekable here
+    const data = fs.get(f.path);
+    if (!data) return 8;
+    const off = Number(offset);
+    let newPos;
+    switch (whence) {
+      case 0: newPos = off; break;               // WHENCE_SET
+      case 1: newPos = f.pos + off; break;       // WHENCE_CUR
+      case 2: newPos = data.length + off; break; // WHENCE_END
+      default: return 28;                        // EINVAL
+    }
+    if (newPos < 0) return 28;
+    f.pos = newPos;
+    const view = new DataView(instance.exports.memory.buffer);
+    view.setBigUint64(newOffsetPtr, BigInt(newPos), true);
+    return 0;
+  },
+  fd_tell(fd, ptr) {
+    const f = openFiles.get(fd);
+    if (!f) return 8;
+    const view = new DataView(instance.exports.memory.buffer);
+    view.setBigUint64(ptr, BigInt(f.pos), true);
+    return 0;
+  },
   fd_fdstat_get(_fd, fdstatPtr) {
     const view = new DataView(instance.exports.memory.buffer);
     for (let off = 0; off < 24; off++) view.setUint8(fdstatPtr + off, 0);
     return 0;
   },
+  fd_fdstat_set_flags(_fd, _flags) { return 0; },
+  fd_filestat_get(fd, ptr) {
+    const view = new DataView(instance.exports.memory.buffer);
+    const f = openFiles.get(fd);
+    if (f) {
+      const data = fs.get(f.path);
+      if (!data) return 8;
+      writeFilestat(view, ptr, data.length);
+      return 0;
+    }
+    if (fd === 0 || fd === 1 || fd === 2) {
+      // stdio = char device, size 0
+      for (let i = 0; i < 64; i++) view.setUint8(ptr + i, 0);
+      view.setUint8(ptr + 16, 2); // filetype_character_device
+      return 0;
+    }
+    return 8;
+  },
+  fd_prestat_get(fd, ptr) {
+    if (fd !== PREOPEN_FD) return 8; // EBADF — terminates wasi-libc preopen scan
+    const view = new DataView(instance.exports.memory.buffer);
+    const nameBytes = encoder.encode(PREOPEN_PATH);
+    view.setUint8(ptr, 0);                                 // tag = preopentype_dir
+    view.setUint32(ptr + 4, nameBytes.length, true);
+    return 0;
+  },
+  fd_prestat_dir_name(fd, ptr, len) {
+    if (fd !== PREOPEN_FD) return 8;
+    const memory = new Uint8Array(instance.exports.memory.buffer);
+    const nameBytes = encoder.encode(PREOPEN_PATH);
+    const n = Math.min(nameBytes.length, len);
+    memory.set(nameBytes.subarray(0, n), ptr);
+    return 0;
+  },
+  fd_read(fd, iovsPtr, iovsLen, nreadPtr) {
+    if (debug.trace) console.log(`[wasi] fd_read fd=${fd} iovsLen=${iovsLen}`);
+    const view = new DataView(instance.exports.memory.buffer);
+    if (fd === 0) {
+      // stdin: no input source; return EOF
+      view.setUint32(nreadPtr, 0, true);
+      return 0;
+    }
+    const f = openFiles.get(fd);
+    if (!f) {
+      if (debug.trace) console.log(`[wasi] fd_read EBADF fd=${fd}`);
+      return 8;
+    }
+    const data = fs.get(f.path);
+    if (!data) return 8;
+    const memory = new Uint8Array(instance.exports.memory.buffer);
+    let total = 0;
+    for (let i = 0; i < iovsLen; i++) {
+      const ptr = view.getUint32(iovsPtr + i * 8, true);
+      const len = view.getUint32(iovsPtr + i * 8 + 4, true);
+      const remaining = data.length - f.pos;
+      if (remaining <= 0) break;
+      const n = Math.min(len, remaining);
+      memory.set(data.subarray(f.pos, f.pos + n), ptr);
+      f.pos += n;
+      total += n;
+    }
+    view.setUint32(nreadPtr, total, true);
+    return 0;
+  },
+  path_open(dirfd, _dirflags, pathPtr, pathLen,
+            _oflags, _rightsBase /* i64 BigInt */, _rightsInh /* i64 BigInt */,
+            _fdflags, fdPtr) {
+    if (debug.trace) console.log(`[wasi] path_open dirfd=${dirfd} path="${readUtf8(pathPtr, pathLen)}" fdPtr=${fdPtr}`);
+    if (dirfd !== PREOPEN_FD) return 8;
+    const relPath = readUtf8(pathPtr, pathLen);
+    const fullPath = resolvePath(relPath);
+    if (!fs.has(fullPath)) {
+      if (debug.trace) console.log(`[wasi] path_open ENOENT: ${fullPath}`);
+      return 44; // ENOENT
+    }
+    const fd = nextFileFd++;
+    openFiles.set(fd, { path: fullPath, pos: 0 });
+    const view = new DataView(instance.exports.memory.buffer);
+    view.setUint32(fdPtr, fd, true);
+    if (debug.trace) console.log(`[wasi] path_open OK: ${fullPath} → fd=${fd}`);
+    return 0;
+  },
+  path_filestat_get(dirfd, _flags, pathPtr, pathLen, ptr) {
+    if (dirfd !== PREOPEN_FD) return 8;
+    const relPath = readUtf8(pathPtr, pathLen);
+    const data = fs.get(resolvePath(relPath));
+    if (!data) return 44;
+    writeFilestat(new DataView(instance.exports.memory.buffer), ptr, data.length);
+    return 0;
+  },
   proc_exit(code) {
     console.log("[mruby] proc_exit", code);
   },
-  environ_sizes_get(c, s) {
+  // env vars ----------------------------------------------------------------
+  environ_sizes_get(countPtr, sizesPtr) {
     const view = new DataView(instance.exports.memory.buffer);
-    view.setUint32(c, 0, true); view.setUint32(s, 0, true); return 0;
+    const entries = Object.entries(env);
+    let totalSize = 0;
+    for (const [k, v] of entries) totalSize += encoder.encode(`${k}=${v}\0`).length;
+    view.setUint32(countPtr, entries.length, true);
+    view.setUint32(sizesPtr, totalSize, true);
+    return 0;
   },
-  environ_get() { return 0; },
+  environ_get(envPtr, bufPtr) {
+    const view = new DataView(instance.exports.memory.buffer);
+    const memory = new Uint8Array(instance.exports.memory.buffer);
+    let offset = bufPtr;
+    Object.entries(env).forEach(([k, v], i) => {
+      view.setUint32(envPtr + i * 4, offset, true);
+      const bytes = encoder.encode(`${k}=${v}\0`);
+      memory.set(bytes, offset);
+      offset += bytes.length;
+    });
+    return 0;
+  },
   args_sizes_get(c, s) {
     const view = new DataView(instance.exports.memory.buffer);
     view.setUint32(c, 0, true); view.setUint32(s, 0, true); return 0;
   },
   args_get() { return 0; },
-  // Additional WASI imports pulled in by mruby-io / hal-posix-io. We
-  // never exercise these paths in kotoyomi; return ENOSYS (28) so any
-  // accidental call fails loudly. New ones added in mruby 4.0.0's HAL
-  // refactor are grouped at the bottom.
-  fd_fdstat_set_flags(_fd, _flags) { return 28; },
-  fd_filestat_get(_fd, _ptr) { return 28; },
-  fd_prestat_get(_fd, _ptr) { return 8; },
-  fd_prestat_dir_name(_fd, _ptr, _len) { return 8; },
-  fd_read(_fd, _iovs, _iovsLen, _nreadPtr) { return 28; },
-  fd_tell(_fd, _ptr) { return 28; },
-  path_open() { return 28; },
-  // Added by hal-posix-io (mruby 4.0.0)
+  // clock -------------------------------------------------------------------
+  clock_time_get(id, _precision, ptr) {
+    const view = new DataView(instance.exports.memory.buffer);
+    let nanos;
+    if (id === 0) {
+      // CLOCK_REALTIME — Date.now() is ms since epoch, scale to ns
+      nanos = BigInt(Math.floor(Date.now() * 1e6));
+    } else {
+      // monotonic / process_cputime / thread_cputime — performance.now
+      const now = (typeof performance !== "undefined" ? performance.now() : Date.now());
+      nanos = BigInt(Math.floor(now * 1e6));
+    }
+    view.setBigUint64(ptr, nanos, true);
+    return 0;
+  },
+  clock_res_get(_id, ptr) {
+    // 1ms resolution (Date.now / performance.now in JS)
+    const view = new DataView(instance.exports.memory.buffer);
+    view.setBigUint64(ptr, 1_000_000n, true);
+    return 0;
+  },
+  // random ------------------------------------------------------------------
+  random_get(ptr, len) {
+    const memory = new Uint8Array(instance.exports.memory.buffer, ptr, len);
+    // crypto.getRandomValues caps at 65536 bytes per call
+    for (let off = 0; off < len; off += 65536) {
+      const slice = memory.subarray(off, Math.min(off + 65536, len));
+      crypto.getRandomValues(slice);
+    }
+    return 0;
+  },
+  // unimplemented (not exercised in current scope) — return ENOSYS-ish ------
   fd_filestat_set_size(_fd, _size) { return 28; },
   fd_filestat_set_times(_fd, _atim, _mtim, _flags) { return 28; },
   fd_pread(_fd, _iovs, _iovsLen, _offset, _nreadPtr) { return 28; },
   fd_pwrite(_fd, _iovs, _iovsLen, _offset, _nwrittenPtr) { return 28; },
   fd_readdir(_fd, _buf, _bufLen, _cookie, _bufused) { return 28; },
   fd_renumber(_from, _to) { return 28; },
-  fd_sync(_fd) { return 28; },
-  fd_advise(_fd, _offset, _len, _advice) { return 28; },
+  fd_sync(_fd) { return 0; },
+  fd_advise(_fd, _offset, _len, _advice) { return 0; },
   fd_allocate(_fd, _offset, _len) { return 28; },
-  fd_datasync(_fd) { return 28; },
+  fd_datasync(_fd) { return 0; },
   path_create_directory(_fd, _path, _pathLen) { return 28; },
-  path_filestat_get(_fd, _flags, _path, _pathLen, _ptr) { return 28; },
   path_filestat_set_times() { return 28; },
   path_link() { return 28; },
   path_readlink() { return 28; },
@@ -392,19 +587,7 @@ const wasiImports = {
   path_symlink() { return 28; },
   path_unlink_file() { return 28; },
   poll_oneoff() { return 28; },
-  random_get() { return 28; },
   sched_yield() { return 0; },
-  clock_time_get(_id, _precision, ptr) {
-    // mruby-time references this; return zeros so calls don't throw.
-    const view = new DataView(instance.exports.memory.buffer);
-    view.setBigUint64(ptr, 0n, true);
-    return 0;
-  },
-  clock_res_get(_id, ptr) {
-    const view = new DataView(instance.exports.memory.buffer);
-    view.setBigUint64(ptr, 0n, true);
-    return 0;
-  },
 };
 
 // --- env: SJLJ helpers (resolved by libsetjmp.a, kept empty as fallback) ----

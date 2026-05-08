@@ -13,7 +13,7 @@
 import { readFile, readdir } from "node:fs/promises";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { dirname, join, resolve } from "node:path";
-import { boot, evalRuby } from "../js/adapter.js";
+import { boot, evalRuby, env, fs } from "../js/adapter.js";
 
 // --- Browser-ish env shim --------------------------------------------------
 // Tests use Date / Map / Set / Error / Promise / EventTarget / setTimeout —
@@ -31,6 +31,13 @@ globalThis.fetch = async (url) => {
 const wasmUrl = process.env.MRUBY_JS_BRIDGE_WASM
   ? pathToFileURL(resolve(process.cwd(), process.env.MRUBY_JS_BRIDGE_WASM)).href
   : new URL("../../../host/mruby.wasm", import.meta.url).href;
+
+// Populate WASI env vars + virtual filesystem fixtures BEFORE boot.
+// test_wasi.rb reads these.
+env.SPEC_RUNNER = "wasm_spec";
+fs.set("/spec_fixture.txt", new TextEncoder().encode("spec\nfixture\nlines\n"));
+fs.set("/spec_binary.dat", new Uint8Array([0xDE, 0xAD, 0xBE, 0xEF]));
+
 await boot(wasmUrl);
 
 // --- Load spec_helper + all test_*.rb -------------------------------------

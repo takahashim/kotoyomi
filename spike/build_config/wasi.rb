@@ -73,6 +73,11 @@ MRuby::CrossBuild.new("wasi") do |conf|
   # JSBridge::Value to forward unknown method calls to JS).
   conf.gem core: "mruby-method"
 
+  # Time / Random — used by Ruby code; underlying WASI primitives
+  # (clock_time_get / random_get) are implemented in adapter.js.
+  conf.gem core: "mruby-time"
+  conf.gem core: "mruby-random"
+
   # Our gem (mruby ↔ JS bridge)
   conf.gem File.expand_path("../mrbgem/mruby-js-bridge", __dir__)
 
