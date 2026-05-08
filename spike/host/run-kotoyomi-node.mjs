@@ -8,7 +8,7 @@
 
 import { readFile } from "node:fs/promises";
 import { fileURLToPath } from "node:url";
-import { boot, evalRuby } from "../mrbgem/mruby-js-bridge/js/adapter.js";
+import { createVM } from "../mrbgem/mruby-js-bridge/js/adapter.js";
 
 // --- Minimal DOM/Audio/Event shims -----------------------------------------
 class FakeNode {
@@ -77,7 +77,7 @@ globalThis.fetch = async (url) => {
 };
 
 // --- Boot + load app -------------------------------------------------------
-await boot(new URL("./mruby.wasm", import.meta.url).href);
+const vm = await createVM({ wasm: new URL("./mruby.wasm", import.meta.url).href });
 
 // Load the canonical kotoyomi lib from the repo root. Since Phase 2e
 // migrated lib/ to mruby + JSBridge, the same files run here under Node
@@ -86,7 +86,7 @@ const APP = ["lib/dom.rb", "lib/renderer.rb", "lib/player.rb", "lib/kotoyomi.rb"
 for (const rel of APP) {
   const src = await readFile(new URL(`../../${rel}`, import.meta.url), "utf8");
   console.log(`[load] ${rel}`);
-  const rc = evalRuby(src);
+  const rc = vm.eval(src);
   if (rc !== 0) {
     console.error(`[load] ${rel} failed`);
     process.exit(1);
@@ -94,7 +94,7 @@ for (const rel of APP) {
 }
 
 console.log("[run] Kotoyomi.start");
-evalRuby("Kotoyomi.start");
+vm.eval("Kotoyomi.start");
 
 // --- Simulate the <track> finishing loading -------------------------------
 // App#start should have registered load/error listeners. Fire 'load'.

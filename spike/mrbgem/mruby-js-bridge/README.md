@@ -56,87 +56,104 @@ these undefined symbols:
 -Wl,--allow-undefined -Wl,--export=js_bridge_invoke_proc -Wl,--export=js_bridge_eval_handle
 ```
 
-### 2. Boot from the JS host
+### 2. Spawn a VM from the JS host
 
 ```js
-import { boot, evalRuby } from "<path-to-gem>/js/adapter.js";
+import { createVM } from "<path-to-gem>/js/adapter.js";
 
-const instance = await boot("/path/to/mruby.wasm");
-evalRuby("puts JSBridge.global[:navigator][:userAgent].to_s");
+const vm = await createVM({ wasm: "/path/to/mruby.wasm" });
+vm.eval("puts JSBridge.global[:navigator][:userAgent].to_s");
 ```
 
-`boot(wasmUrl)` instantiates the wasm with all required imports
-(`js_bridge.*` for the bridge, `wasi_snapshot_preview1.*` for `puts`,
-`Time.now`, `File.read`, etc.) and runs `_start`. After that,
-`evalRuby(source)` parses + runs Ruby source on the live VM. Each call
+`createVM(options)` fetches the wasm, instantiates it with all required
+imports (`js_bridge.*` for the bridge, `wasi_snapshot_preview1.*` for
+`puts`, `Time.now`, `File.read`, etc.), runs `_start`, and returns a
+**VM handle** with all per-instance state. Each `createVM()` call gets
+an independent handle table + WASI state — multiple VMs can coexist in
+one process (useful for tests, sandboxing, hot reload).
+
+`vm.eval(source)` parses + runs Ruby source on the live VM. Each call
 is auto-wrapped in a Fiber so `Value#await` works at top level.
 
-The adapter also exports a few host-side knobs:
+The VM handle exposes:
+
+| Property | Purpose |
+|---|---|
+| `vm.eval(src)` | parse + execute Ruby; returns 0 on success, 1 on parse/runtime error |
+| `vm.fs` | Map-like facade over the tree VFS (`set` / `get` / `has` / `delete` / iteration / `populate` / `root`) |
+| `vm.env` | mutable env hash — mutations after `_start` don't reach wasi-libc's environ cache, but `mruby-wasi-env` ENV reflects them via setenv |
+| `vm.args` | mutable argv array |
+| `vm.stdin` | `{ bytes, pushText(s) }` — feed STDIN |
+| `vm.instance` | the underlying `WebAssembly.Instance` (for power users) |
+| `vm.alloc` / `vm.get` / `vm.release` | low-level handle table access |
+| `vm.handleCount()` | currently-allocated JS handles (for leak detection) |
+
+Module-level exports:
 
 | Export | Purpose |
 |---|---|
-| `env` | object — set entries before `boot` to populate Ruby `ENV` (requires the sibling `mruby-wasi-env` gem) |
-| `args` | array — push entries before `boot` to populate Ruby `ARGV` |
-| `stdin` | object with `pushText(s)` / `bytes` — feed bytes to `STDIN.read` / `gets` |
-| `fs` | Map-like facade over the tree VFS (see below) |
-| `File` / `Directory` | tree-VFS node classes for declarative population |
-| `wasiImports` | the bundled WASI preview1 implementation (clock, random, env, args, stdin, fs read/write) |
-| `debug` | `{ trace: false }` — set `debug.trace = true` to see handle release / callback dispatch |
-| `alloc` / `get` / `release` | low-level handle table — usually you don't need these |
+| `createVM(options)` | the factory above |
+| `Directory` / `File` | tree-VFS node classes for declarative population |
+| `debug` | `{ trace: false }` — global debug toggle (handle release / callback dispatch / WASI fd_read / path_open) |
+
+#### `createVM` options
+
+| Option | Default | Notes |
+|---|---|---|
+| `wasm` (string, required) | — | URL to mruby.wasm |
+| `env` (object) | `{}` | initial environ, available to mruby via wasi-libc's getenv |
+| `args` (string[]) | `["mruby-js-bridge"]` | initial argv (`main.c` puts `args[1..]` into Ruby `ARGV`) |
+| `stdin` (string \| Uint8Array) | `""` | initial stdin payload for `STDIN.read` / `gets` |
+| `fs` (Directory) | empty Directory | declarative initial tree (or use `vm.fs.set(...)` after creation) |
+| `wasi` (object) | bundled in-memory impl | replacement `wasi_snapshot_preview1` import object |
+| `onStart` (function) | calls `_start()` | post-instantiate callback; override for shims that need to bind the instance themselves |
 
 #### Populating the virtual filesystem
 
-The bundled WASI preview1 implementation backs `File.read` / `File.open` /
-`File.write` etc. with a tree of `File` and `Directory` nodes. Two ways
-to populate it:
-
 ```js
-import { fs, File, Directory } from "<path-to-gem>/js/adapter.js";
+import { createVM, Directory, File } from "<path-to-gem>/js/adapter.js";
 
-// 1. Map-style — auto-creates intermediate Directory nodes on demand.
-fs.set("/data/poem.vtt", new TextEncoder().encode("WEBVTT\n..."));
-fs.set("/config/app.json", new TextEncoder().encode("{}"));
-
-// 2. Declarative — hand over a whole tree at once.
-fs.populate(new Directory({
-  data: new Directory({
-    "poem.vtt": new File(new TextEncoder().encode("WEBVTT\n...")),
+// 1. Declarative — hand the whole tree to createVM.
+const vm = await createVM({
+  wasm: "/path/to/mruby.wasm",
+  fs: new Directory({
+    data: new Directory({
+      "poem.vtt": new File(new TextEncoder().encode("WEBVTT\n...")),
+    }),
+    empty_dir: new Directory(),
   }),
-  empty_dir: new Directory(),
-}));
+});
+
+// 2. Map-style after creation — auto-creates intermediate Directory nodes.
+vm.fs.set("/config/app.json", new TextEncoder().encode("{}"));
 ```
 
-`fs` supports `set` / `get` / `has` / `delete` / `entries` / `keys` /
+`vm.fs` supports `set` / `get` / `has` / `delete` / `entries` / `keys` /
 `values` / `Symbol.iterator` / `clear` / `size` (Map-compatible), plus
 `populate(dir)` and `root` for tree access. Iteration yields only File
 leaves, in tree-traversal order.
 
 #### Swapping in a different WASI
 
-`boot(wasmUrl, options)` accepts:
-
-- `options.wasi` — replacement `wasi_snapshot_preview1` import object.
-  Defaults to the bundled `wasiImports`.
-- `options.onStart(instance)` — runs immediately after instantiation.
-  Defaults to calling `instance.exports._start()`. Override when your
-  custom WASI needs to bind the instance before `_start`.
-
 For example, to use [`@bjorn3/browser_wasi_shim`](https://github.com/bjorn3/browser_wasi_shim)
 (tree VFS, fd_readdir, OPFS, multiple preopens):
 
 ```js
-import { boot } from "<path-to-gem>/js/adapter.js";
+import { createVM } from "<path-to-gem>/js/adapter.js";
 import { WASI } from "@bjorn3/browser_wasi_shim";
 
 const wasi = new WASI([], [], [/* preopens */]);
-await boot("/path/to/mruby.wasm", {
+const vm = await createVM({
+  wasm: "/path/to/mruby.wasm",
   wasi: wasi.wasiImport,
   onStart: (instance) => wasi.start(instance),
 });
 ```
 
-The `js_bridge.*` imports (the JSBridge layer itself) are always
-provided by this adapter regardless of which WASI is used.
+When you pass `options.wasi`, `vm.fs` / `vm.env` / `vm.args` / `vm.stdin`
+are `undefined` (your WASI owns that state). The `js_bridge.*` imports
+(the JSBridge layer itself) are always provided by this adapter
+regardless of which WASI is used.
 
 ### 3. Dispatch from Ruby
 

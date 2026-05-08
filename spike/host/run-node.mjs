@@ -1,11 +1,11 @@
 // Phase 2c smoke test — exercises every bridge feature against a minimal
-// browser-ish env. Boots mruby, then drives Ruby evaluation from the host
-// via evalRuby (no embedded SCRIPT in main.c anymore).
+// browser-ish env. Spawns a fresh mruby VM via createVM, then drives
+// Ruby evaluation from the host via vm.eval.
 //
 // Usage: node host/run-node.mjs
 
 import { readFile } from "node:fs/promises";
-import { boot, evalRuby } from "../mrbgem/mruby-js-bridge/js/adapter.js";
+import { createVM } from "../mrbgem/mruby-js-bridge/js/adapter.js";
 
 globalThis.document = {
   _title: "",
@@ -23,7 +23,7 @@ globalThis.fetch = async () => new Response(wasmBytes, {
   headers: { "Content-Type": "application/wasm" },
 });
 
-await boot("./mruby.wasm");
+const vm = await createVM({ wasm: "./mruby.wasm" });
 
 const SCRIPT = `
 puts 'BasicObject + await-replacement test'
@@ -53,7 +53,7 @@ target.dispatchEvent(evt)
 puts 'sync part done'
 `;
 
-evalRuby(SCRIPT);
+vm.eval(SCRIPT);
 
 await new Promise((r) => setTimeout(r, 50));
 console.log("--- node run done ---");

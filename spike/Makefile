@@ -115,10 +115,12 @@ DIST_VERSION := 0.0.0-dev
 dist: link
 	@rm -rf $(DIST_DIR)
 	@mkdir -p $(DIST_DIR)
-	cp $(GEM_DIR)/js/adapter.js  $(DIST_DIR)/adapter.js
-	cp $(GEM_DIR)/README.md      $(DIST_DIR)/README.md
-	cp $(GEM_DIR)/LICENSE        $(DIST_DIR)/LICENSE
-	cp $(HOST_WASM)              $(DIST_DIR)/mruby.wasm
+	cp $(GEM_DIR)/js/adapter.js       $(DIST_DIR)/adapter.js
+	cp $(GEM_DIR)/js/wasi-preview1.js $(DIST_DIR)/wasi-preview1.js
+	cp $(GEM_DIR)/js/debug.js         $(DIST_DIR)/debug.js
+	cp $(GEM_DIR)/README.md           $(DIST_DIR)/README.md
+	cp $(GEM_DIR)/LICENSE             $(DIST_DIR)/LICENSE
+	cp $(HOST_WASM)                   $(DIST_DIR)/mruby.wasm
 	@printf '%s\n' \
 	  '{' \
 	  '  "name": "mruby-js-bridge",' \
@@ -130,7 +132,7 @@ dist: link
 	  '    ".": "./adapter.js",' \
 	  '    "./wasm": "./mruby.wasm"' \
 	  '  },' \
-	  '  "files": ["adapter.js", "mruby.wasm", "README.md", "LICENSE"],' \
+	  '  "files": ["adapter.js", "wasi-preview1.js", "debug.js", "mruby.wasm", "README.md", "LICENSE"],' \
 	  '  "license": "MIT",' \
 	  '  "engines": { "node": ">=18" }' \
 	  '}' \
@@ -142,8 +144,8 @@ dist: link
 	@echo "Use it from a consumer project:"
 	@echo "  cp -r dist/mruby-js-bridge/ ../my-project/vendor/"
 	@echo "  # ESM:"
-	@echo "    import { boot, evalRuby } from './vendor/mruby-js-bridge/adapter.js'"
-	@echo "    await boot(new URL('./vendor/mruby-js-bridge/mruby.wasm', import.meta.url).href)"
+	@echo "    import { createVM } from './vendor/mruby-js-bridge/adapter.js'"
+	@echo "    const vm = await createVM({ wasm: new URL('./vendor/mruby-js-bridge/mruby.wasm', import.meta.url).href })"
 
 clean:
 	rm -rf $(MRUBY_DIR)/build/wasi

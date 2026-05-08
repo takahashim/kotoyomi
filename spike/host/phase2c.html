@@ -16,10 +16,10 @@
     </p>
     <pre id="status">starting...</pre>
     <script type="module">
-      import { boot, evalRuby } from "../mrbgem/mruby-js-bridge/js/adapter.js";
+      import { createVM } from "../mrbgem/mruby-js-bridge/js/adapter.js";
       const status = document.getElementById("status");
       try {
-        await boot("./mruby.wasm");
+        const vm = await createVM({ wasm: "./mruby.wasm" });
         const SCRIPT = `
           JS = JSBridge
           doc = JS.global[:document]
@@ -28,7 +28,7 @@
           puts "float = #{n}"
           JS.global[:Promise].resolve(7).then { |v| puts "promise resolved: #{v.to_i}" }
         `;
-        evalRuby(SCRIPT);
+        vm.eval(SCRIPT);
         status.textContent = "boot OK — check console + tab title";
       } catch (err) {
         console.error(err);
