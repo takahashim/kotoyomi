@@ -4,7 +4,7 @@
  * mruby core ships no ENV class. wasi-libc exposes the standard POSIX
  * triad (`extern char **environ`, getenv, setenv, unsetenv) populated
  * from the WASI imports `environ_get` / `environ_sizes_get` at startup
- * — mruby-js-bridge's wasi-preview1.js implements those imports against
+ * — mruby-wasm-js's wasi-preview1.js implements those imports against
  * a JS-side `env` object. Any other preview1-compatible host adapter
  * works too.
  *

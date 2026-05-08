@@ -5,7 +5,7 @@
  * closedir / mkdir / rmdir / stat). wasi-libc translates those to
  * WASI imports — path_open(O_DIRECTORY), fd_readdir, fd_close,
  * path_create_directory, path_remove_directory, path_filestat_get —
- * which mruby-js-bridge's wasi-preview1.js implements. Any other
+ * which mruby-wasm-js's wasi-preview1.js implements. Any other
  * preview1-compatible host adapter should also work.
  *
  * Surface (mirrors CRuby's Dir for the methods we expose):

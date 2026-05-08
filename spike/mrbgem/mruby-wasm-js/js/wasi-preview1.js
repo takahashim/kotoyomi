@@ -1,4 +1,4 @@
-// WASI preview1 implementation (in-memory) for mruby-js-bridge.
+// WASI preview1 implementation (in-memory) for mruby-wasm-js.
 //
 // `createWasiPreview1({ env, args, stdin, fs })` returns a fresh,
 // independent WASI implementation with its own state — env vars, argv,
@@ -346,7 +346,7 @@ function makeStdin(initial) {
  */
 export function createWasiPreview1(options = {}) {
   const env = { ...(options.env ?? {}) };
-  const args = [...(options.args ?? ["mruby-js-bridge"])];
+  const args = [...(options.args ?? ["mruby-wasm-js"])];
   const stdin = makeStdin(options.stdin);
   const root = options.fs instanceof Directory ? options.fs : new Directory();
   const fs = createFsFacade(root);

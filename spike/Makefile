@@ -6,7 +6,7 @@
 #   make wasm        Copy built wasm into host/
 #   make serve       Start a local server on host/
 #   make all         wasi-sdk → mruby → wasm
-#   make clean       Remove built artifacts (mruby/build, host/mruby.wasm)
+#   make clean       Remove built artifacts (mruby/build, host/*.wasm)
 
 WASI_SDK_VERSION := 33.0
 WASI_SDK_URL := https://github.com/WebAssembly/wasi-sdk/releases/download/wasi-sdk-33/wasi-sdk-33.0-arm64-macos.tar.gz
@@ -27,9 +27,9 @@ LIBMRUBY := $(MRUBY_DIR)/build/wasi-js/lib/libmruby.a
 
 MAIN_C := $(CURDIR)/main/main.c
 HOST_DIR := $(CURDIR)/host
-HOST_WASM := $(HOST_DIR)/mruby.wasm
+HOST_WASM := $(HOST_DIR)/mruby-js.wasm
 
-# CLI / wasmtime variant — same gem set minus mruby-js-bridge, plus
+# CLI / wasmtime variant — same gem set minus mruby-wasm-js, plus
 # mruby-bin-mruby for a standard `mruby` CLI entry. See
 # build_config/wasi-cli.rb for rationale.
 MRUBY_CONFIG_CLI := $(CURDIR)/build_config/wasi-cli.rb
@@ -106,19 +106,19 @@ serve:
 	# or http://localhost:8001/host/ for the spike test landing page.
 
 test: link
-	node mrbgem/mruby-js-bridge/wasm_spec/runner.mjs
+	node mrbgem/mruby-wasm-js/wasm_spec/runner.mjs
 
 # ---------------------------------------------------------------------------
-# `make dist` — assemble a publishable bundle of mruby-js-bridge under
-# dist/mruby-js-bridge/ with adapter.js + the built mruby.wasm + README +
+# `make dist` — assemble a publishable bundle of mruby-wasm-js under
+# dist/mruby-wasm-js/ with the JS adapter + the built mruby-js.wasm + README +
 # LICENSE + package.json. The bundle can be consumed as:
-#   - cp -r dist/mruby-js-bridge/ /path/to/some/project/  (drop-in)
+#   - cp -r dist/mruby-wasm-js/ /path/to/some/project/  (drop-in)
 #   - npm pack / npm publish  (when ready)
 #   - tarball for GitHub Releases  (Phase B)
 # Version is hardcoded to 0.0.0-dev; bump before publishing.
 # ---------------------------------------------------------------------------
-DIST_DIR := $(CURDIR)/dist/mruby-js-bridge
-GEM_DIR := $(CURDIR)/mrbgem/mruby-js-bridge
+DIST_DIR := $(CURDIR)/dist/mruby-wasm-js
+GEM_DIR := $(CURDIR)/mrbgem/mruby-wasm-js
 DIST_VERSION := 0.0.0-dev
 
 dist: link
@@ -129,21 +129,21 @@ dist: link
 	cp $(GEM_DIR)/js/*.js   $(DIST_DIR)/
 	cp $(GEM_DIR)/README.md $(DIST_DIR)/README.md
 	cp $(GEM_DIR)/LICENSE   $(DIST_DIR)/LICENSE
-	cp $(HOST_WASM)         $(DIST_DIR)/mruby.wasm
+	cp $(HOST_WASM)         $(DIST_DIR)/mruby-js.wasm
 	# package.json's `files` list is regenerated to match the actual
 	# .js files copied above.
 	$(eval JS_FILES := $(notdir $(wildcard $(GEM_DIR)/js/*.js)))
-	$(eval JS_FILES_JSON := $(shell printf '"%s", ' $(JS_FILES) "mruby.wasm" "README.md" "LICENSE" | sed 's/, $$//'))
+	$(eval JS_FILES_JSON := $(shell printf '"%s", ' $(JS_FILES) "mruby-js.wasm" "README.md" "LICENSE" | sed 's/, $$//'))
 	@printf '%s\n' \
 	  '{' \
-	  '  "name": "mruby-js-bridge",' \
+	  '  "name": "mruby-wasm-js",' \
 	  '  "version": "$(DIST_VERSION)",' \
 	  '  "description": "Minimal mruby ↔ JavaScript bridge for WASM hosts",' \
 	  '  "type": "module",' \
 	  '  "main": "./index.js",' \
 	  '  "exports": {' \
 	  '    ".": "./index.js",' \
-	  '    "./wasm": "./mruby.wasm"' \
+	  '    "./wasm": "./mruby-js.wasm"' \
 	  '  },' \
 	  '  "files": [$(JS_FILES_JSON)],' \
 	  '  "license": "MIT",' \
@@ -151,16 +151,16 @@ dist: link
 	  '}' \
 	  > $(DIST_DIR)/package.json
 	@echo ""
-	@echo "Built dist/mruby-js-bridge/ (version $(DIST_VERSION)):"
+	@echo "Built dist/mruby-wasm-js/ (version $(DIST_VERSION)):"
 	@ls -lh $(DIST_DIR)
 	@echo ""
 	@echo "Use it from a consumer project:"
-	@echo "  cp -r dist/mruby-js-bridge/ ../my-project/vendor/"
+	@echo "  cp -r dist/mruby-wasm-js/ ../my-project/vendor/"
 	@echo "  # ESM:"
-	@echo "    import { createVM } from 'mruby-js-bridge'  # via package.json main"
+	@echo "    import { createVM } from 'mruby-wasm-js'  # via package.json main"
 	@echo "    # or explicit path:"
-	@echo "    import { createVM } from './vendor/mruby-js-bridge/index.js'"
-	@echo "    const vm = await createVM({ wasm: new URL('./vendor/mruby-js-bridge/mruby.wasm', import.meta.url).href })"
+	@echo "    import { createVM } from './vendor/mruby-wasm-js/index.js'"
+	@echo "    const vm = await createVM({ wasm: new URL('./vendor/mruby-wasm-js/mruby-js.wasm', import.meta.url).href })"
 
 # ---------------------------------------------------------------------------
 # `make cli-link` — build the CLI / wasmtime variant (mruby-bin-mruby
@@ -224,13 +224,13 @@ puts "[smoke-wt] OK"\n' > $$TMPDIR/selftest.rb; \
 dist-cli: cli-link
 	@rm -rf $(DIST_DIR_CLI)
 	@mkdir -p $(DIST_DIR_CLI)
-	cp $(HOST_WASM_CLI) $(DIST_DIR_CLI)/mruby.wasm
+	cp $(HOST_WASM_CLI) $(DIST_DIR_CLI)/mruby-cli.wasm
 	cp $(GEM_DIR)/LICENSE $(DIST_DIR_CLI)/LICENSE
 	@printf '%s\n' \
 	  '# mruby-wasm-cli' \
 	  '' \
 	  'CLI / wasmtime build of upstream mruby compiled to `wasm32-wasip1`.' \
-	  'Sibling distribution to `mruby-js-bridge` — same upstream mruby and' \
+	  'Sibling distribution to `mruby-wasm-js` — same upstream mruby and' \
 	  'the same `mruby-wasi-dir` / `mruby-wasi-env` mgems, but **without** the' \
 	  'JS bridge. Runs on any preview1-compatible WASI host (wasmtime,' \
 	  'wasmer, browser_wasi_shim, etc.).' \
@@ -239,14 +239,14 @@ dist-cli: cli-link
 	  '' \
 	  '```bash' \
 	  '# wasmtime ≥37 (modern Wasm EH proposal landed in Cranelift):' \
-	  'wasmtime -W exceptions=y --dir=. mruby.wasm script.rb' \
+	  'wasmtime -W exceptions=y --dir=. mruby-cli.wasm script.rb' \
 	  '' \
 	  '# Node.js — needs --experimental-wasm-exnref for modern EH:' \
 	  'node --experimental-wasi-unstable-preview1 --experimental-wasm-exnref \\' \
 	  '    run-cli-node.mjs script.rb' \
 	  '```' \
 	  '' \
-	  '`mruby.wasm` is `mruby-bin-mruby` compiled to wasm32-wasip1, so it' \
+	  '`mruby-cli.wasm` is `mruby-bin-mruby` compiled to wasm32-wasip1, so it' \
 	  'accepts the same CLI surface as native `mruby`: pass a script path' \
 	  'as argv, or pipe Ruby source on stdin.' \
 	  '' \
@@ -273,7 +273,7 @@ dist-cli: cli-link
 	  '' \
 	  '## Related projects' \
 	  '' \
-	  '- [`mruby-js-bridge`](../mruby-js-bridge/) — sibling package: same' \
+	  '- [`mruby-wasm-js`](../mruby-wasm-js/) — sibling package: same' \
 	  '  upstream mruby plus a `js_bridge` C primitive layer + JS adapter' \
 	  '  (`createVM` factory) for browser / Node hosts.' \
 	  '- [`ruby/ruby.wasm`](https://github.com/ruby/ruby.wasm) — official' \
@@ -290,7 +290,7 @@ dist-cli: cli-link
 	@ls -lh $(DIST_DIR_CLI)
 	@echo ""
 	@echo "Try it on wasmtime ≥37:"
-	@echo "  wasmtime -W exceptions=y --dir=. dist/mruby-wasm-cli/mruby.wasm script.rb"
+	@echo "  wasmtime -W exceptions=y --dir=. dist/mruby-wasm-cli/mruby-cli.wasm script.rb"
 	@echo ""
 	@echo "Or via Node (needs --experimental-wasm-exnref for modern EH):"
 	@echo "  node --experimental-wasi-unstable-preview1 --experimental-wasm-exnref \\"
@@ -310,7 +310,7 @@ smoke-all: test smoke-cli smoke-cli-wasmtime
 dist-all: dist dist-cli
 	@echo ""
 	@echo "Built both distributions:"
-	@echo "  dist/mruby-js-bridge/  — JS-host build (browser/Node createVM API)"
+	@echo "  dist/mruby-wasm-js/  — JS-host build (browser/Node createVM API)"
 	@echo "  dist/mruby-wasm-cli/   — CLI build (run via node:wasi or other V8-based hosts)"
 
 clean:

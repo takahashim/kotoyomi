@@ -1,4 +1,4 @@
-# mruby-js-bridge
+# mruby-wasm-js
 
 Minimal mruby ↔ JavaScript bridge for WASM hosts. Lets Ruby code running
 in an mruby VM compiled to WebAssembly call into the JS host (browser,
@@ -8,7 +8,7 @@ Node, etc.) and vice versa, with a `ruby.wasm`-compatible feel
 ## Layout
 
 ```
-mruby-js-bridge/
+mruby-wasm-js/
 ├── mrbgem.rake               # gem spec
 ├── README.md                 # this file
 ├── src/js_bridge.c           # C primitives (compiled into wasm)
@@ -43,7 +43,7 @@ MRuby::CrossBuild.new("wasi") do |conf|
   conf.gem core: "mruby-io"       # optional (File.read/open via WASI fs)
   conf.gem core: "mruby-time"     # optional (Time.now via WASI clock_time_get)
   conf.gem core: "mruby-random"   # optional (rand/Random via WASI random_get)
-  conf.gem File.expand_path("path/to/mruby-js-bridge")
+  conf.gem File.expand_path("path/to/mruby-wasm-js")
   # Optional sibling gems — Ruby surface for WASI primitives that mruby
   # core doesn't ship.
   conf.gem File.expand_path("path/to/mruby-wasi-dir")  # Dir.entries / mkdir / rmdir / exist?
@@ -64,12 +64,12 @@ these undefined symbols:
 ```js
 // Via npm / bare specifier (preferred — package.json#main resolves
 // to ./index.js):
-import { createVM } from "mruby-js-bridge";
+import { createVM } from "mruby-wasm-js";
 
 // Or via explicit path (vendored / unpublished consumers):
-import { createVM } from "./vendor/mruby-js-bridge/index.js";
+import { createVM } from "./vendor/mruby-wasm-js/index.js";
 
-const vm = await createVM({ wasm: "/path/to/mruby.wasm" });
+const vm = await createVM({ wasm: "/path/to/mruby-js.wasm" });
 vm.eval("puts JSBridge.global[:navigator][:userAgent].to_s");
 ```
 
@@ -109,9 +109,9 @@ Module-level exports:
 
 | Option | Default | Notes |
 |---|---|---|
-| `wasm` (string, required) | — | URL to mruby.wasm |
+| `wasm` (string, required) | — |URL to mruby-js.wasm |
 | `env` (object) | `{}` | initial environ, available to mruby via wasi-libc's getenv |
-| `args` (string[]) | `["mruby-js-bridge"]` | initial argv (`main.c` puts `args[1..]` into Ruby `ARGV`) |
+| `args` (string[]) | `["mruby-wasm-js"]` | initial argv (`main.c` puts `args[1..]` into Ruby `ARGV`) |
 | `stdin` (string \| Uint8Array) | `""` | initial stdin payload for `STDIN.read` / `gets` |
 | `fs` (Directory) | empty Directory | declarative initial tree (or use `vm.fs.set(...)` after creation) |
 | `wasi` (object) | bundled in-memory impl | replacement `wasi_snapshot_preview1` import object |
@@ -120,11 +120,11 @@ Module-level exports:
 #### Populating the virtual filesystem
 
 ```js
-import { createVM, Directory, File } from "mruby-js-bridge";
+import { createVM, Directory, File } from "mruby-wasm-js";
 
 // 1. Declarative — hand the whole tree to createVM.
 const vm = await createVM({
-  wasm: "/path/to/mruby.wasm",
+  wasm: "/path/to/mruby-js.wasm",
   fs: new Directory({
     data: new Directory({
       "poem.vtt": new File(new TextEncoder().encode("WEBVTT\n...")),
@@ -148,12 +148,12 @@ For example, to use [`@bjorn3/browser_wasi_shim`](https://github.com/bjorn3/brow
 (tree VFS, fd_readdir, OPFS, multiple preopens):
 
 ```js
-import { createVM } from "mruby-js-bridge";
+import { createVM } from "mruby-wasm-js";
 import { WASI } from "@bjorn3/browser_wasi_shim";
 
 const wasi = new WASI([], [], [/* preopens */]);
 const vm = await createVM({
-  wasm: "/path/to/mruby.wasm",
+  wasm: "/path/to/mruby-js.wasm",
   wasi: wasi.wasiImport,
   onStart: (instance) => wasi.start(instance),
 });
@@ -191,12 +191,12 @@ The spec suite requires a JS host. From within this gem directory:
 node wasm_spec/runner.mjs
 ```
 
-By default it looks for `mruby.wasm` at `../../../host/mruby.wasm`
+By default it looks for `mruby-js.wasm` at `../../../host/mruby-js.wasm`
 (matches the spike's layout where the build output lives in
 `spike/host/`). To point at any other location, set the env var:
 
 ```bash
-MRUBY_JS_BRIDGE_WASM=/abs/path/to/your/mruby.wasm \
+MRUBY_WASM_PATH=/abs/path/to/your/mruby-js.wasm \
   node wasm_spec/runner.mjs
 ```
 
@@ -233,7 +233,7 @@ This gem ships two wasm artefacts with different EH choices:
 
 | Build | EH form | Why |
 |---|---|---|
-| **JS-host** (`mruby.wasm`) | Legacy | Maximum browser compatibility — works on V8/JSC/SpiderMonkey going back several years without flags. |
+| **JS-host** (`mruby-js.wasm`) | Legacy | Maximum browser compatibility — works on V8/JSC/SpiderMonkey going back several years without flags. |
 | **CLI** (`mruby-cli.wasm`) | Modern | Required for wasmtime ≥37 (Cranelift only implements modern EH). |
 
 Tested runtime support:

@@ -1,5 +1,5 @@
 /*
- * mruby-js-bridge: minimal mruby ↔ JavaScript bridge for WASM hosts.
+ * mruby-wasm-js: minimal mruby ↔ JavaScript bridge for WASM hosts.
  *
  * JSBridge::Value is a C-backed (MRB_TT_DATA) class. Each instance owns
  * a JS handle; when the Ruby object is collected by mruby's GC, the
@@ -506,7 +506,7 @@ js_bridge_invoke_proc(int callback_id, int args_handle) {
 /* ---------- Gem init ---------- */
 
 void
-mrb_mruby_js_bridge_gem_init(mrb_state *mrb) {
+mrb_mruby_wasm_js_gem_init(mrb_state *mrb) {
   g_mrb = mrb;
   g_callback_table = mrb_nil_value();
 
@@ -555,7 +555,7 @@ mrb_mruby_js_bridge_gem_init(mrb_state *mrb) {
 }
 
 void
-mrb_mruby_js_bridge_gem_final(mrb_state *mrb) {
+mrb_mruby_wasm_js_gem_final(mrb_state *mrb) {
   /* Per-Value handles are released by mruby GC via js_value_free.
      Anything still alive at mrb_close gets freed during final GC sweep. */
 }

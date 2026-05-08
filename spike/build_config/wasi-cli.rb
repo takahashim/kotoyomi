@@ -1,7 +1,7 @@
 # mruby cross-build for WASI (wasm32-wasip1) — CLI / wasmtime variant.
 #
 # Same toolchain + most gems as build_config/wasi.rb, but:
-#   - NO mruby-js-bridge (this build is meant to run on wasmtime / wasi-libc
+#   - NO mruby-wasm-js (this build is meant to run on wasmtime / wasi-libc
 #     hosts that don't provide the js_bridge.* imports)
 #   - NO mruby-method (only needed for JSBridge::Value#method_missing)
 #   - INCLUDES mruby-bin-mruby, which produces a `bin/mruby` CLI wasm that
@@ -11,7 +11,7 @@
 # can be run as `wasmtime --dir=. mruby script.rb`.
 #
 # Sibling to wasi.rb which is for the JS-host build (browser/Node via the
-# mruby-js-bridge JS adapter).
+# mruby-wasm-js JS adapter).
 
 wasi_sdk = ENV.fetch("WASI_SDK_PATH") { abort "Set WASI_SDK_PATH" }
 sysroot = "#{wasi_sdk}/share/wasi-sysroot"

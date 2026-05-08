@@ -68,7 +68,7 @@ Spec.describe "WASI: args → ARGV" do
 
   Spec.assert "ARGV.first is not the program name" do
     # We skip argv[0] (program name) like CRuby does.
-    Spec.assert_false ARGV.first == "mruby-js-bridge"
+    Spec.assert_false ARGV.first == "mruby-wasm-js"
   end
 end
 

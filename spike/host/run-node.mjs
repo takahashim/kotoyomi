@@ -5,7 +5,7 @@
 // Usage: node host/run-node.mjs
 
 import { readFile } from "node:fs/promises";
-import { createVM } from "../mrbgem/mruby-js-bridge/js/index.js";
+import { createVM } from "../mrbgem/mruby-wasm-js/js/index.js";
 
 globalThis.document = {
   _title: "",
@@ -18,12 +18,12 @@ globalThis.document = {
 };
 globalThis.queueMicrotask = (fn) => Promise.resolve().then(fn);
 
-const wasmBytes = await readFile(new URL("./mruby.wasm", import.meta.url));
+const wasmBytes = await readFile(new URL("./mruby-js.wasm", import.meta.url));
 globalThis.fetch = async () => new Response(wasmBytes, {
   headers: { "Content-Type": "application/wasm" },
 });
 
-const vm = await createVM({ wasm: "./mruby.wasm" });
+const vm = await createVM({ wasm: "./mruby-js.wasm" });
 
 const SCRIPT = `
 puts 'BasicObject + await-replacement test'

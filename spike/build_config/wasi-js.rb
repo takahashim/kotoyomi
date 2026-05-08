@@ -1,9 +1,9 @@
 # mruby cross-build for WASI (wasm32-wasip1) — JS-host variant.
 #
 # Sibling to build_config/wasi-cli.rb (CLI / wasmtime variant). This
-# config is the JS-host build: includes mruby-js-bridge so the wasm
+# config is the JS-host build: includes mruby-wasm-js so the wasm
 # carries the js_bridge.* primitive imports that the gem's JS adapter
-# (mrbgem/mruby-js-bridge/js/index.js — `createVM` factory) satisfies.
+# (mrbgem/mruby-wasm-js/js/index.js — `createVM` factory) satisfies.
 #
 # Requires: WASI_SDK_PATH environment variable pointing to an extracted
 # wasi-sdk distribution (e.g. /opt/wasi-sdk).
@@ -89,7 +89,7 @@ MRuby::CrossBuild.new("wasi-js") do |conf|
   conf.gem core: "mruby-random"
 
   # Our gems
-  conf.gem File.expand_path("../mrbgem/mruby-js-bridge", __dir__)
+  conf.gem File.expand_path("../mrbgem/mruby-wasm-js", __dir__)
   # mruby-wasi-dir provides Dir.entries / Dir.mkdir / Dir.rmdir /
   # Dir.exist? on top of wasi-libc's <dirent.h>, which the bridge's
   # WASI imports (path_open(O_DIRECTORY) / fd_readdir / ...) implement.

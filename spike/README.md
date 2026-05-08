@@ -21,13 +21,13 @@ sample player を動作させるところまで到達。
 spike/
 ├── Makefile                # build orchestration
 ├── README.md
-├── .gitignore              # mruby/, vendor/, host/mruby.wasm を除外
+├── .gitignore              # mruby/, vendor/, host/mruby-js.wasm を除外
 ├── build_config/
-│   ├── wasi-js.rb          # JS-host build (mruby + mruby-js-bridge + WASI mgems)
+│   ├── wasi-js.rb          # JS-host build (mruby + mruby-wasm-js + WASI mgems)
 │   └── wasi-cli.rb         # CLI build (mruby + mruby-bin-mruby + WASI mgems, no JS bridge)
 ├── mruby/                  # gitignored、`make mruby` で git clone される
 ├── mrbgem/
-│   └── mruby-js-bridge/    # ── 再配布可能な gem 本体 (詳細は gem の README) ──
+│   └── mruby-wasm-js/    # ── 再配布可能な gem 本体 (詳細は gem の README) ──
 │       ├── mrbgem.rake
 │       ├── README.md             # gem 単体の使い方
 │       ├── src/js_bridge.c       # C primitive (WASM imports + Value)
@@ -56,10 +56,10 @@ spike/
     ├── app.css                   # ルートの app.css のコピー
     ├── run-node.mjs              # Phase 2c 機能の Node smoke
     ├── run-kotoyomi-node.mjs     # kotoyomi 起動シナリオの Node smoke
-    └── mruby.wasm                # gitignored、ビルド成果
+    ├── mruby-js.wasm             # gitignored、JS-host build 成果
 ```
 
-`index.js` は **gem 内部** (`mrbgem/mruby-js-bridge/js/index.js`) に
+`index.js` は **gem 内部** (`mrbgem/mruby-wasm-js/js/index.js`) に
 あります。spike 側 (`host/*.js`、`host/*.html`) はそれを相対パスで
 import する consumer です。
 
@@ -84,33 +84,33 @@ make serve      # docroot は spike/、http://localhost:8001/host/sample/ へ
   Promise.then、addEventListener+once) の boot-only smoke
 - http://localhost:8001/host/ — 上記へのリンク集
 
-`debug.trace = true` を `mrbgem/mruby-js-bridge/js/index.js` で有効にすると、
+`debug.trace = true` を `mrbgem/mruby-wasm-js/js/index.js` で有効にすると、
 handle release / callback 発火を console に出します (デフォルトは off)。
 
 ## gem 単体のテスト
 
 ```bash
 make test                                # spike Makefile 経由 (link → wasm_spec/runner.mjs)
-node mrbgem/mruby-js-bridge/wasm_spec/runner.mjs   # 直接実行
+node mrbgem/mruby-wasm-js/wasm_spec/runner.mjs   # 直接実行
 ```
 
 別プロジェクトの wasm を使いたい場合は env var で指定:
 
 ```bash
-MRUBY_JS_BRIDGE_WASM=/abs/path/to/mruby.wasm \
-  node mrbgem/mruby-js-bridge/wasm_spec/runner.mjs
+MRUBY_WASM_PATH=/abs/path/to/mruby-js.wasm \
+  node mrbgem/mruby-wasm-js/wasm_spec/runner.mjs
 ```
 
 ## 配布用バンドル (Phase A)
 
-`make dist` で `dist/mruby-js-bridge/` に publishable な形のバンドルを出力。
+`make dist` で `dist/mruby-wasm-js/` に publishable な形のバンドルを出力。
 
 ```bash
 make dist
-# → dist/mruby-js-bridge/
+# → dist/mruby-wasm-js/
 #     ├── package.json     (name, exports, files)
 #     ├── index.js       (gem の js/index.js のコピー)
-#     ├── mruby.wasm       (build 成果)
+#     ├── mruby-js.wasm    (build 成果、JS-host)
 #     ├── README.md
 #     └── LICENSE
 ```
@@ -118,13 +118,13 @@ make dist
 consumer 側での利用例:
 
 ```js
-// 1. cp -r dist/mruby-js-bridge/ をベンダーに配置:
-import { createVM } from "./vendor/mruby-js-bridge/index.js";
-await boot(new URL("./vendor/mruby-js-bridge/mruby.wasm", import.meta.url).href);
+// 1. cp -r dist/mruby-wasm-js/ をベンダーに配置:
+import { createVM } from "./vendor/mruby-wasm-js/index.js";
+await boot(new URL("./vendor/mruby-wasm-js/mruby-js.wasm", import.meta.url).href);
 
 // 2. npm publish 後 (Phase C):
-import { createVM } from "mruby-js-bridge";
-import wasmUrl from "mruby-js-bridge/wasm";
+import { createVM } from "mruby-wasm-js";
+import wasmUrl from "mruby-wasm-js/wasm";
 await boot(wasmUrl);
 ```
 

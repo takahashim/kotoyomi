@@ -1,19 +1,19 @@
-// Test runner for mruby-js-bridge. Builds a fresh VM, loads
+// Test runner for mruby-wasm-js. Builds a fresh VM, loads
 // spec_helper.rb + each test_*.rb via vm.eval, then runs Spec.summary
 // which sets JSBridge.global[:__test_failed__].
 //
 // Exit code 0 if all tests pass, 1 otherwise.
-// Run with: `node mrbgem/mruby-js-bridge/wasm_spec/runner.mjs`
+// Run with: `node mrbgem/mruby-wasm-js/wasm_spec/runner.mjs`
 //
-// The wasm path defaults to spike's build output (../../../host/mruby.wasm)
-// but can be overridden via MRUBY_JS_BRIDGE_WASM env var.
+// The wasm path defaults to spike's build output (../../../host/mruby-js.wasm)
+// but can be overridden via MRUBY_WASM_PATH env var.
 
 import { readFile, readdir } from "node:fs/promises";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { dirname, join, resolve } from "node:path";
 import { createVM, Directory, File, debug } from "../js/index.js";
 
-if (process.env.MRUBY_JS_BRIDGE_TRACE) debug.trace = true;
+if (process.env.MRUBY_WASM_TRACE) debug.trace = true;
 
 // --- Browser-ish env shim -------------------------------------------------
 const here = dirname(fileURLToPath(import.meta.url));
@@ -24,9 +24,9 @@ globalThis.fetch = async (url) => {
   });
 };
 
-const wasmUrl = process.env.MRUBY_JS_BRIDGE_WASM
-  ? pathToFileURL(resolve(process.cwd(), process.env.MRUBY_JS_BRIDGE_WASM)).href
-  : new URL("../../../host/mruby.wasm", import.meta.url).href;
+const wasmUrl = process.env.MRUBY_WASM_PATH
+  ? pathToFileURL(resolve(process.cwd(), process.env.MRUBY_WASM_PATH)).href
+  : new URL("../../../host/mruby-js.wasm", import.meta.url).href;
 
 // Build the initial tree fixture declaratively. Includes flat fixtures
 // (spec_fixture.txt / spec_binary.dat) at root plus nested directories
@@ -43,7 +43,7 @@ const initialFs = new Directory({
 const vm = await createVM({
   wasm: wasmUrl,
   env: { SPEC_RUNNER: "wasm_spec" },
-  args: ["mruby-js-bridge", "--smoke", "test_wasi", "fixture"],
+  args: ["mruby-wasm-js", "--smoke", "test_wasi", "fixture"],
   stdin: "stdin payload\n",
   fs: initialFs,
 });

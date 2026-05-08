@@ -4,9 +4,9 @@
 
 朗読データは [WebVTT](https://developer.mozilla.org/ja/docs/Web/API/WebVTT_API) に格納し、ブラウザ標準の `<track kind="metadata">` でロード・パース・同期する。プレイヤー制御と DOM 操作は **mruby** (WASM 化) 上の Ruby が担い、JS は mruby ランタイムの起動と最小限のホストだけを担当する。
 
-ビルドステップは無く、ブラウザの ES Modules 機能で `src/*.js` がそのまま動く。Ruby ランタイムも `vendor/mruby-js-bridge/mruby.wasm` を self-host しているので CDN 依存ゼロ。
+ビルドステップは無く、ブラウザの ES Modules 機能で `src/*.js` がそのまま動く。Ruby ランタイムも `vendor/mruby-wasm-js/mruby-js.wasm` を self-host しているので CDN 依存ゼロ。
 
-詳細仕様は [`spec.md`](./spec.md) を参照。当初は ruby.wasm + `js` gem ベースだったが、Phase 2 で自前 mrbgem (`mruby-js-bridge`) に切り替えた。trade-off は [`docs/runtime-tradeoffs.md`](./docs/runtime-tradeoffs.md) に整理してある。
+詳細仕様は [`spec.md`](./spec.md) を参照。当初は ruby.wasm + `js` gem ベースだったが、Phase 2 で自前 mrbgem (`mruby-wasm-js`) に切り替えた。trade-off は [`docs/runtime-tradeoffs.md`](./docs/runtime-tradeoffs.md) に整理してある。
 
 ## 役割分担
 
@@ -14,9 +14,9 @@
 | ------------------------ | ------------------------------------------------------ |
 | WebVTT                   | 朗読データ                                             |
 | ブラウザ (TextTrack API) | フォーマット解釈と音声同期                             |
-| Ruby (mruby + mruby-js-bridge) | プレイヤー制御・状態遷移・DOM 操作               |
+| Ruby (mruby + mruby-wasm-js) | プレイヤー制御・状態遷移・DOM 操作               |
 | CSS                      | 視覚効果                                               |
-| JS                       | mruby.wasm の createVM + JSBridge imports 提供 (`index.js`) |
+| JS                       | mruby-js.wasm の createVM + JSBridge imports 提供 (`index.js`) |
 
 ## 要件
 
@@ -36,7 +36,7 @@ bundle exec wsv
 
 - `http://localhost:8000/works/sample/` — 動くデモ
 
-mruby ランタイム (`vendor/mruby-js-bridge/mruby.wasm`、約 4MB / gzip 約 1MB) はリポジトリに同梱しているので、初回ロードも数百ミリ秒以内です。`<audio>` の再生ボタンで段落がフェードインしながらハイライトされ、「最初に戻る」ボタンで冒頭に戻ります。
+mruby ランタイム (`vendor/mruby-wasm-js/mruby-js.wasm`、約 4MB / gzip 約 1MB) はリポジトリに同梱しているので、初回ロードも数百ミリ秒以内です。`<audio>` の再生ボタンで段落がフェードインしながらハイライトされ、「最初に戻る」ボタンで冒頭に戻ります。
 
 ## 使い方
 
@@ -115,8 +115,8 @@ cue 本文の各行は `<p class="stanza-line">` として `<div class="stanza">
 ## アーキテクチャと Ruby ランタイム
 
 - **`lib/*.rb`** — Ruby で書いたプレイヤー本体 (DOM、Renderer、Player、Kotoyomi)
-- **`src/ruby_runtime.js`** — mruby.wasm を boot して `lib/*.rb` を流し込むだけのスターター
-- **`vendor/mruby-js-bridge/`** — mruby + 自前 mrbgem `mruby-js-bridge` を WASM 化したバンドル (再配布可能、Phase A の `make dist` で生成)
+- **`src/ruby_runtime.js`** — mruby-js.wasm を boot して `lib/*.rb` を流し込むだけのスターター
+- **`vendor/mruby-wasm-js/`** — mruby + 自前 mrbgem `mruby-wasm-js` を WASM 化したバンドル (再配布可能、Phase A の `make dist` で生成)
 - **`spike/`** — gem 開発のための隔離環境 (mruby cross-build、wasm_spec、smoke runner)
 
 ランタイムを ruby.wasm ではなく mruby に切り替えた経緯と trade-off は [`docs/runtime-tradeoffs.md`](./docs/runtime-tradeoffs.md) を参照。フェーズ別の進行ログは [`docs/phase1-spike-summary.md`](./docs/phase1-spike-summary.md)、[`docs/phase2-spike-summary.md`](./docs/phase2-spike-summary.md) にあります。

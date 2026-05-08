@@ -8,7 +8,7 @@
 
 import { readFile } from "node:fs/promises";
 import { fileURLToPath } from "node:url";
-import { createVM } from "../mrbgem/mruby-js-bridge/js/index.js";
+import { createVM } from "../mrbgem/mruby-wasm-js/js/index.js";
 
 // --- Minimal DOM/Audio/Event shims -----------------------------------------
 class FakeNode {
@@ -77,7 +77,7 @@ globalThis.fetch = async (url) => {
 };
 
 // --- Boot + load app -------------------------------------------------------
-const vm = await createVM({ wasm: new URL("./mruby.wasm", import.meta.url).href });
+const vm = await createVM({ wasm: new URL("./mruby-js.wasm", import.meta.url).href });
 
 // Load the canonical kotoyomi lib from the repo root. Since Phase 2e
 // migrated lib/ to mruby + JSBridge, the same files run here under Node

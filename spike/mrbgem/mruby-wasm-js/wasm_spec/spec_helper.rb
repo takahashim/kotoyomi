@@ -1,4 +1,4 @@
-# Minimal spec framework for mruby-js-bridge tests. assert / assert_equal /
+# Minimal spec framework for mruby-wasm-js tests. assert / assert_equal /
 # assert_raises in the mruby-test idiom, but lightweight (no rake-test
 # integration). Each test file calls Spec.describe / Spec.assert; the
 # Node runner triggers Spec.summary at the end which prints a per-group

@@ -11,15 +11,15 @@
   <body>
     <h1>Phase 2c smoke (boot only)</h1>
     <p>
-      Boots <code>mruby.wasm</code> and runs the bridge smoke test
+      Boots <code>mruby-js.wasm</code> and runs the bridge smoke test
       (Float, JS.object, nil?, Promise.then, addEventListener+once).
     </p>
     <pre id="status">starting...</pre>
     <script type="module">
-      import { createVM } from "../mrbgem/mruby-js-bridge/js/index.js";
+      import { createVM } from "../mrbgem/mruby-wasm-js/js/index.js";
       const status = document.getElementById("status");
       try {
-        const vm = await createVM({ wasm: "./mruby.wasm" });
+        const vm = await createVM({ wasm: "./mruby-js.wasm" });
         const SCRIPT = `
           JS = JSBridge
           doc = JS.global[:document]

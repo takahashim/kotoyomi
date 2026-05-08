@@ -1,7 +1,7 @@
 /*
  * Minimal mruby driver. Opens an mruby state in `_start` and leaves it
  * alive — the JS host drives Ruby source loading via the
- * `js_bridge_eval_handle` export (see mrbgem/mruby-js-bridge/src/js_bridge.c).
+ * `js_bridge_eval_handle` export (see mrbgem/mruby-wasm-js/src/js_bridge.c).
  *
  * Replaces the more typical "mruby reads stdin / runs a SCRIPT" entry
  * with a minimal "boot the VM, then wait for JS-driven evals" pattern.

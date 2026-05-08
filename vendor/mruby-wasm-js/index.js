@@ -1,11 +1,11 @@
-// JS host adapter for the mruby-js-bridge mrbgem.
+// JS host adapter for the mruby-wasm-js mrbgem.
 //
 // Provides the JSBridge core via a single factory:
 //
-//   import { createVM, Directory, File } from "mruby-js-bridge";
+//   import { createVM, Directory, File } from "mruby-wasm-js";
 //
 //   const vm = await createVM({
-//     wasm: "/path/to/mruby.wasm",
+//     wasm: "/path/to/mruby-js.wasm",
 //     env: { LOCALE: "ja" },
 //     fs: new Directory({ "data": new Directory({ "poem.vtt": new File(bytes) }) }),
 //   });
@@ -34,7 +34,7 @@ import { debug } from "./debug.js";
 export { Directory, File, createFsFacade, debug };
 
 // `env` import object for instantiateStreaming. Empty in current builds:
-// the gem's mruby.wasm uses hal-wasi-io (mrbgem/hal-wasi-io/) for the
+// the gem's mruby-js.wasm uses hal-wasi-io (mrbgem/hal-wasi-io/) for the
 // IO HAL backend, and mruby-wasi-stubs (mrbgem/mruby-wasi-stubs/) for
 // the few POSIX symbols mruby-io's io.c references directly (dup,
 // waitpid). Both are linked into the wasm itself, leaving the `env`
@@ -230,9 +230,9 @@ function createJsBridgeImports({ handles, errorSlot, getInstance }) {
  * Instantiate a fresh mruby VM and return a handle for driving it.
  *
  * @param {object} options
- * @param {string} options.wasm                  URL to mruby.wasm
+ * @param {string} options.wasm                  URL to mruby-js.wasm
  * @param {Record<string, string>} [options.env] initial ENV
- * @param {string[]} [options.args]              initial ARGV (defaults to ["mruby-js-bridge"])
+ * @param {string[]} [options.args]              initial ARGV (defaults to ["mruby-wasm-js"])
  * @param {string|Uint8Array} [options.stdin]    initial stdin payload
  * @param {Directory} [options.fs]               initial root Directory for the VFS
  * @param {object} [options.wasi]                replacement `wasi_snapshot_preview1` import object;
@@ -265,7 +265,7 @@ function createJsBridgeImports({ handles, errorSlot, getInstance }) {
  *     import { WASI } from "@bjorn3/browser_wasi_shim";
  *     const wasi = new WASI([], [], preopens);
  *     const vm = await createVM({
- *       wasm: "/path/to/mruby.wasm",
+ *       wasm: "/path/to/mruby-js.wasm",
  *       wasi: wasi.wasiImport,
  *       onStart: (instance) => wasi.start(instance),
  *     });
@@ -275,7 +275,7 @@ function createJsBridgeImports({ handles, errorSlot, getInstance }) {
  */
 export async function createVM(options = {}) {
   const { wasm, onStart } = options;
-  if (!wasm) throw new Error("createVM: options.wasm (URL to mruby.wasm) is required");
+  if (!wasm) throw new Error("createVM: options.wasm (URL to mruby-js.wasm) is required");
 
   const handles = createHandleTable();
   const errorSlot = createErrorSlot();
