@@ -3,7 +3,7 @@
 // `createWasiPreview1({ env, args, stdin, fs })` returns a fresh,
 // independent WASI implementation with its own state — env vars, argv,
 // stdin buffer, virtual filesystem, open-fd table. Used as the default
-// `wasi_snapshot_preview1` import object by adapter.js's `createVM`,
+// `wasi_snapshot_preview1` import object by index.js's `createVM`,
 // but also exportable for direct use.
 //
 // Internal layout:

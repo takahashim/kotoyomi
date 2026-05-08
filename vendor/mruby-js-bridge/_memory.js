@@ -1,4 +1,4 @@
-// Shared memory helpers for adapter.js and wasi-preview1.js.
+// Shared memory helpers for index.js and wasi-preview1.js.
 //
 // Both modules need to encode/decode UTF-8 from wasm linear memory and
 // read i32 arrays of handles. Keeping a single TextDecoder/Encoder pair

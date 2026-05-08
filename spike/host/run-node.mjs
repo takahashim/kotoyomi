@@ -5,7 +5,7 @@
 // Usage: node host/run-node.mjs
 
 import { readFile } from "node:fs/promises";
-import { createVM } from "../mrbgem/mruby-js-bridge/js/adapter.js";
+import { createVM } from "../mrbgem/mruby-js-bridge/js/index.js";
 
 globalThis.document = {
   _title: "",

@@ -13,7 +13,10 @@ mruby-js-bridge/
 ├── README.md                 # this file
 ├── src/js_bridge.c           # C primitives (compiled into wasm)
 ├── mrblib/js_bridge.rb       # JSBridge module + Value class (compiled into wasm)
-├── js/adapter.js             # JS-side host implementation of WASM imports
+├── js/index.js               # JS-side entry point (createVM factory + JSBridge core)
+├── js/wasi-preview1.js       # bundled WASI preview1 implementation
+├── js/_memory.js             # internal: shared TextDecoder/Encoder + memory helpers
+├── js/debug.js               # global debug toggle
 └── wasm_spec/                # Self-contained tests (need a JS host to run)
     ├── spec_helper.rb        # Spec micro-framework
     ├── runner.mjs            # Node test runner
@@ -59,7 +62,12 @@ these undefined symbols:
 ### 2. Spawn a VM from the JS host
 
 ```js
-import { createVM } from "<path-to-gem>/js/adapter.js";
+// Via npm / bare specifier (preferred — package.json#main resolves
+// to ./index.js):
+import { createVM } from "mruby-js-bridge";
+
+// Or via explicit path (vendored / unpublished consumers):
+import { createVM } from "./vendor/mruby-js-bridge/index.js";
 
 const vm = await createVM({ wasm: "/path/to/mruby.wasm" });
 vm.eval("puts JSBridge.global[:navigator][:userAgent].to_s");
@@ -112,7 +120,7 @@ Module-level exports:
 #### Populating the virtual filesystem
 
 ```js
-import { createVM, Directory, File } from "<path-to-gem>/js/adapter.js";
+import { createVM, Directory, File } from "mruby-js-bridge";
 
 // 1. Declarative — hand the whole tree to createVM.
 const vm = await createVM({
@@ -140,7 +148,7 @@ For example, to use [`@bjorn3/browser_wasi_shim`](https://github.com/bjorn3/brow
 (tree VFS, fd_readdir, OPFS, multiple preopens):
 
 ```js
-import { createVM } from "<path-to-gem>/js/adapter.js";
+import { createVM } from "mruby-js-bridge";
 import { WASI } from "@bjorn3/browser_wasi_shim";
 
 const wasi = new WASI([], [], [/* preopens */]);
@@ -152,9 +160,10 @@ const vm = await createVM({
 ```
 
 When you pass `options.wasi`, `vm.fs` / `vm.env` / `vm.args` / `vm.stdin`
-are `undefined` (your WASI owns that state). The `js_bridge.*` imports
-(the JSBridge layer itself) are always provided by this adapter
-regardless of which WASI is used.
+are absent from the returned object (your WASI owns that state — use
+`"fs" in vm` to discriminate). The `js_bridge.*` imports (the JSBridge
+layer itself) are always provided by this adapter regardless of which
+WASI is used.
 
 ### 3. Dispatch from Ruby
 

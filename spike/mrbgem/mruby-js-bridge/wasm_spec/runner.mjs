@@ -11,7 +11,7 @@
 import { readFile, readdir } from "node:fs/promises";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { dirname, join, resolve } from "node:path";
-import { createVM, Directory, File, debug } from "../js/adapter.js";
+import { createVM, Directory, File, debug } from "../js/index.js";
 
 if (process.env.MRUBY_JS_BRIDGE_TRACE) debug.trace = true;
 

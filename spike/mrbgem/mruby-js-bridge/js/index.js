@@ -2,7 +2,7 @@
 //
 // Provides the JSBridge core via a single factory:
 //
-//   import { createVM, Directory, File } from "<gem>/js/adapter.js";
+//   import { createVM, Directory, File } from "mruby-js-bridge";
 //
 //   const vm = await createVM({
 //     wasm: "/path/to/mruby.wasm",

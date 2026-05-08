@@ -131,9 +131,9 @@ dist: link
 	  '  "version": "$(DIST_VERSION)",' \
 	  '  "description": "Minimal mruby ↔ JavaScript bridge for WASM hosts",' \
 	  '  "type": "module",' \
-	  '  "main": "./adapter.js",' \
+	  '  "main": "./index.js",' \
 	  '  "exports": {' \
-	  '    ".": "./adapter.js",' \
+	  '    ".": "./index.js",' \
 	  '    "./wasm": "./mruby.wasm"' \
 	  '  },' \
 	  '  "files": [$(JS_FILES_JSON)],' \
@@ -148,7 +148,9 @@ dist: link
 	@echo "Use it from a consumer project:"
 	@echo "  cp -r dist/mruby-js-bridge/ ../my-project/vendor/"
 	@echo "  # ESM:"
-	@echo "    import { createVM } from './vendor/mruby-js-bridge/adapter.js'"
+	@echo "    import { createVM } from 'mruby-js-bridge'  # via package.json main"
+	@echo "    # or explicit path:"
+	@echo "    import { createVM } from './vendor/mruby-js-bridge/index.js'"
 	@echo "    const vm = await createVM({ wasm: new URL('./vendor/mruby-js-bridge/mruby.wasm', import.meta.url).href })"
 
 clean:

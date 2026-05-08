@@ -16,7 +16,7 @@
 | ブラウザ (TextTrack API) | フォーマット解釈と音声同期                             |
 | Ruby (mruby + mruby-js-bridge) | プレイヤー制御・状態遷移・DOM 操作               |
 | CSS                      | 視覚効果                                               |
-| JS                       | mruby.wasm の boot + JSBridge imports 提供 (`adapter.js`) |
+| JS                       | mruby.wasm の createVM + JSBridge imports 提供 (`index.js`) |
 
 ## 要件
 

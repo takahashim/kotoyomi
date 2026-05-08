@@ -1,4 +1,4 @@
-// Shared debug toggle. Lives in its own module so adapter.js (gem core)
+// Shared debug toggle. Lives in its own module so index.js (gem core)
 // and wasi-preview1.js (one of N possible WASI impls) can both import it
 // without forming a cycle.
 //

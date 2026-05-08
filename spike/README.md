@@ -31,7 +31,7 @@ spike/
 │       ├── README.md             # gem 単体の使い方
 │       ├── src/js_bridge.c       # C primitive (WASM imports + Value)
 │       ├── mrblib/js_bridge.rb   # BasicObject ベースの Ruby ラッパー
-│       ├── js/adapter.js         # JS 側 host (WASM imports 実装 + boot/evalRuby)
+│       ├── js/index.js          # JS 側 host (createVM factory + JSBridge core)
 │       └── wasm_spec/            # gem 自前のテスト (test/ ではない: mruby-test 衝突回避)
 │           ├── spec_helper.rb
 │           ├── runner.mjs
@@ -58,7 +58,7 @@ spike/
     └── mruby.wasm                # gitignored、ビルド成果
 ```
 
-`adapter.js` は **gem 内部** (`mrbgem/mruby-js-bridge/js/adapter.js`) に
+`index.js` は **gem 内部** (`mrbgem/mruby-js-bridge/js/index.js`) に
 あります。spike 側 (`host/*.js`、`host/*.html`) はそれを相対パスで
 import する consumer です。
 
@@ -83,7 +83,7 @@ make serve      # docroot は spike/、http://localhost:8001/host/sample/ へ
   Promise.then、addEventListener+once) の boot-only smoke
 - http://localhost:8001/host/ — 上記へのリンク集
 
-`debug.trace = true` を `mrbgem/mruby-js-bridge/js/adapter.js` で有効にすると、
+`debug.trace = true` を `mrbgem/mruby-js-bridge/js/index.js` で有効にすると、
 handle release / callback 発火を console に出します (デフォルトは off)。
 
 ## gem 単体のテスト
@@ -108,7 +108,7 @@ MRUBY_JS_BRIDGE_WASM=/abs/path/to/mruby.wasm \
 make dist
 # → dist/mruby-js-bridge/
 #     ├── package.json     (name, exports, files)
-#     ├── adapter.js       (gem の js/adapter.js のコピー)
+#     ├── index.js       (gem の js/index.js のコピー)
 #     ├── mruby.wasm       (build 成果)
 #     ├── README.md
 #     └── LICENSE
@@ -118,11 +118,11 @@ consumer 側での利用例:
 
 ```js
 // 1. cp -r dist/mruby-js-bridge/ をベンダーに配置:
-import { boot, evalRuby } from "./vendor/mruby-js-bridge/adapter.js";
+import { createVM } from "./vendor/mruby-js-bridge/index.js";
 await boot(new URL("./vendor/mruby-js-bridge/mruby.wasm", import.meta.url).href);
 
 // 2. npm publish 後 (Phase C):
-import { boot, evalRuby } from "mruby-js-bridge";
+import { createVM } from "mruby-js-bridge";
 import wasmUrl from "mruby-js-bridge/wasm";
 await boot(wasmUrl);
 ```

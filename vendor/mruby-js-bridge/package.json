@@ -3,12 +3,12 @@
   "version": "0.0.0-dev",
   "description": "Minimal mruby ↔ JavaScript bridge for WASM hosts",
   "type": "module",
-  "main": "./adapter.js",
+  "main": "./index.js",
   "exports": {
-    ".": "./adapter.js",
+    ".": "./index.js",
     "./wasm": "./mruby.wasm"
   },
-  "files": ["_memory.js", "adapter.js", "debug.js", "wasi-preview1.js", "mruby.wasm", "README.md", "LICENSE"],
+  "files": ["_memory.js", "debug.js", "index.js", "wasi-preview1.js", "mruby.wasm", "README.md", "LICENSE"],
   "license": "MIT",
   "engines": { "node": ">=18" }
 }
