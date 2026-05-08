@@ -94,6 +94,7 @@ Module-level exports:
 |---|---|
 | `createVM(options)` | the factory above |
 | `Directory` / `File` | tree-VFS node classes for declarative population |
+| `createFsFacade(root)` | wrap an arbitrary `Directory` tree as a Map-compatible fs facade (set/get/has/delete/iteration/clear/size/populate/root). Useful when you want to inspect or mutate a tree before handing it to `createVM({ fs })`, or to get the same facade behaviour against a sub-tree. |
 | `debug` | `{ trace: false }` — global debug toggle (handle release / callback dispatch / WASI fd_read / path_open) |
 
 #### `createVM` options

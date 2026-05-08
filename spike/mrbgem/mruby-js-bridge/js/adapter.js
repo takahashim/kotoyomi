@@ -27,11 +27,11 @@
 //                                  builds imports, instantiates wasm,
 //                                  runs _start, returns VM handle.
 
-import { createWasiPreview1, Directory, File } from "./wasi-preview1.js";
+import { createWasiPreview1, createFsFacade, Directory, File } from "./wasi-preview1.js";
 import { createMemoryHelpers, encoder } from "./_memory.js";
 import { debug } from "./debug.js";
 
-export { Directory, File, debug };
+export { Directory, File, createFsFacade, debug };
 
 // POSIX function stubs that mruby-io / hal-posix-io reference but
 // wasi-libc doesn't ship. With mruby 4.0.0 the HAL was extracted to
@@ -329,23 +329,23 @@ export async function createVM(options = {}) {
     finally { handles.release(handle); }
   }
 
-  const vm = {
+  // Core VM surface plus, when we own the WASI side, the bundled VFS
+  // state (fs / env / args / stdin). Keys are omitted entirely when
+  // the caller passed their own `wasi` — that object controls fs/env/
+  // args/stdin, and `undefined` placeholders are harder to typecheck
+  // and easier to misread than absent properties.
+  return {
     instance,
     eval: evalRuby,
     alloc: handles.alloc,
     get: handles.get,
     release: handles.release,
     handleCount: () => handles.count(),
+    ...(wasiImpl && {
+      fs: wasiImpl.fs,
+      env: wasiImpl.env,
+      args: wasiImpl.args,
+      stdin: wasiImpl.stdin,
+    }),
   };
-  // Expose VFS state only when we own it. When the caller passed their
-  // own `wasi`, that object controls fs/env/args/stdin, so omitting
-  // these keys keeps the returned shape honest (vs. setting them to
-  // undefined, which is harder to typecheck and easier to misread).
-  if (wasiImpl) {
-    vm.fs = wasiImpl.fs;
-    vm.env = wasiImpl.env;
-    vm.args = wasiImpl.args;
-    vm.stdin = wasiImpl.stdin;
-  }
-  return vm;
 }

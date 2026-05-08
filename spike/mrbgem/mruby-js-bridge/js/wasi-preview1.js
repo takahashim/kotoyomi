@@ -217,6 +217,98 @@ export function createFsFacade(root) {
   };
 }
 
+// --- IO helpers (module-level, state-injected) ----------------------------
+// Each helper takes an `io` state object containing exactly the mutable
+// references it touches. Hoisting these out of the factory mirrors the
+// "tree walker" treatment for read/write code paths and lets unit tests
+// drive them with synthetic state ({ fs: mockFs, ... }) without
+// instantiating wasm.
+
+// fd_write helper: write iovec contents into the in-memory file backing
+// `f`. Grows `io.fs` entry if needed; advances f.pos for non-append fds.
+function writeToOpenFile({ fs }, f, view, memory, iovsPtr, iovsLen) {
+  const data = fs.get(f.path);
+  const needed = iovsTotalLen(view, iovsPtr, iovsLen);
+  const writeStart = f.append ? data.length : f.pos;
+  const newSize = Math.max(data.length, writeStart + needed);
+  let target = data;
+  if (newSize > data.length) {
+    target = new Uint8Array(newSize);
+    target.set(data);
+    fs.set(f.path, target);
+  }
+  let pos = writeStart;
+  let total = 0;
+  for (let i = 0; i < iovsLen; i++) {
+    const ptr = view.getUint32(iovsPtr + i * 8, true);
+    const len = view.getUint32(iovsPtr + i * 8 + 4, true);
+    target.set(memory.subarray(ptr, ptr + len), pos);
+    pos += len;
+    total += len;
+  }
+  if (!f.append) f.pos = pos;
+  return total;
+}
+
+// fd_read helper: drain bytes from the JS-side stdin buffer into iovec
+// slots. Returns 0 (EOF) when buffer is empty.
+function readFromStdin({ stdin }, view, memory, iovsPtr, iovsLen) {
+  let total = 0;
+  for (let i = 0; i < iovsLen; i++) {
+    const ptr = view.getUint32(iovsPtr + i * 8, true);
+    const len = view.getUint32(iovsPtr + i * 8 + 4, true);
+    const remaining = stdin.bytes.length;
+    if (remaining <= 0) break;
+    const n = Math.min(len, remaining);
+    memory.set(stdin.bytes.subarray(0, n), ptr);
+    stdin.bytes = stdin.bytes.subarray(n);
+    total += n;
+  }
+  return total;
+}
+
+// fd_read helper: drain bytes from an open file's backing array into
+// iovec slots. Advances f.pos. Returns -1 if the path was removed under
+// us (caller maps to E_BADF).
+function readFromOpenFile({ fs }, f, view, memory, iovsPtr, iovsLen) {
+  const data = fs.get(f.path);
+  if (!data) return -1;
+  let total = 0;
+  for (let i = 0; i < iovsLen; i++) {
+    const ptr = view.getUint32(iovsPtr + i * 8, true);
+    const len = view.getUint32(iovsPtr + i * 8 + 4, true);
+    const remaining = data.length - f.pos;
+    if (remaining <= 0) break;
+    const n = Math.min(len, remaining);
+    memory.set(data.subarray(f.pos, f.pos + n), ptr);
+    f.pos += n;
+    total += n;
+  }
+  return total;
+}
+
+// fd_write helper: drain iovec contents into a line-buffered console.
+// fd 1/2 (and any unknown fd that isn't a tracked file) lands here so
+// `puts` from mruby reaches console.log without spawning a real tty.
+function writeToStdio({ stdoutBuffer }, view, memory, iovsPtr, iovsLen) {
+  let total = 0;
+  for (let i = 0; i < iovsLen; i++) {
+    const ptr = view.getUint32(iovsPtr + i * 8, true);
+    const len = view.getUint32(iovsPtr + i * 8 + 4, true);
+    const str = decoder.decode(memory.subarray(ptr, ptr + len));
+    stdoutBuffer.push(str);
+    if (str.includes("\n")) {
+      const joined = stdoutBuffer.join("");
+      stdoutBuffer.length = 0;
+      for (const line of joined.split("\n")) {
+        if (line.length > 0) console.log("[mruby]", line);
+      }
+    }
+    total += len;
+  }
+  return total;
+}
+
 // --- Stdin helper (module-level) ------------------------------------------
 
 function makeStdin(initial) {
@@ -267,78 +359,9 @@ export function createWasiPreview1(options = {}) {
 
   const { readUtf8 } = createMemoryHelpers(() => instance);
 
-  // --- IO helpers (close over fs, stdin, openFiles, stdoutBuffer) --------
-  function writeToOpenFile(f, view, memory, iovsPtr, iovsLen) {
-    const data = fs.get(f.path);
-    const needed = iovsTotalLen(view, iovsPtr, iovsLen);
-    const writeStart = f.append ? data.length : f.pos;
-    const newSize = Math.max(data.length, writeStart + needed);
-    let target = data;
-    if (newSize > data.length) {
-      target = new Uint8Array(newSize);
-      target.set(data);
-      fs.set(f.path, target);
-    }
-    let pos = writeStart;
-    let total = 0;
-    for (let i = 0; i < iovsLen; i++) {
-      const ptr = view.getUint32(iovsPtr + i * 8, true);
-      const len = view.getUint32(iovsPtr + i * 8 + 4, true);
-      target.set(memory.subarray(ptr, ptr + len), pos);
-      pos += len;
-      total += len;
-    }
-    if (!f.append) f.pos = pos;
-    return total;
-  }
-  function readFromStdin(view, memory, iovsPtr, iovsLen) {
-    let total = 0;
-    for (let i = 0; i < iovsLen; i++) {
-      const ptr = view.getUint32(iovsPtr + i * 8, true);
-      const len = view.getUint32(iovsPtr + i * 8 + 4, true);
-      const remaining = stdin.bytes.length;
-      if (remaining <= 0) break;
-      const n = Math.min(len, remaining);
-      memory.set(stdin.bytes.subarray(0, n), ptr);
-      stdin.bytes = stdin.bytes.subarray(n);
-      total += n;
-    }
-    return total;
-  }
-  function readFromOpenFile(f, view, memory, iovsPtr, iovsLen) {
-    const data = fs.get(f.path);
-    if (!data) return -1;
-    let total = 0;
-    for (let i = 0; i < iovsLen; i++) {
-      const ptr = view.getUint32(iovsPtr + i * 8, true);
-      const len = view.getUint32(iovsPtr + i * 8 + 4, true);
-      const remaining = data.length - f.pos;
-      if (remaining <= 0) break;
-      const n = Math.min(len, remaining);
-      memory.set(data.subarray(f.pos, f.pos + n), ptr);
-      f.pos += n;
-      total += n;
-    }
-    return total;
-  }
-  function writeToStdio(view, memory, iovsPtr, iovsLen) {
-    let total = 0;
-    for (let i = 0; i < iovsLen; i++) {
-      const ptr = view.getUint32(iovsPtr + i * 8, true);
-      const len = view.getUint32(iovsPtr + i * 8 + 4, true);
-      const str = decoder.decode(memory.subarray(ptr, ptr + len));
-      stdoutBuffer.push(str);
-      if (str.includes("\n")) {
-        const joined = stdoutBuffer.join("");
-        stdoutBuffer.length = 0;
-        for (const line of joined.split("\n")) {
-          if (line.length > 0) console.log("[mruby]", line);
-        }
-      }
-      total += len;
-    }
-    return total;
-  }
+  // Single state bag passed to module-level IO helpers below. One
+  // allocation up-front instead of per-call object literals.
+  const io = { fs, stdin, stdoutBuffer };
 
   // --- WASI imports ------------------------------------------------------
   const imports = {
@@ -348,8 +371,8 @@ export function createWasiPreview1(options = {}) {
       const f = openFiles.get(fd);
       if (f && f.type === "dir") return E_ISDIR;
       const total = f
-        ? writeToOpenFile(f, view, memory, iovsPtr, iovsLen)
-        : writeToStdio(view, memory, iovsPtr, iovsLen);
+        ? writeToOpenFile(io, f, view, memory, iovsPtr, iovsLen)
+        : writeToStdio(io, view, memory, iovsPtr, iovsLen);
       view.setUint32(nwrittenPtr, total, true);
       return 0;
     },
@@ -430,11 +453,11 @@ export function createWasiPreview1(options = {}) {
       const memory = new Uint8Array(instance.exports.memory.buffer);
       let total;
       if (fd === 0) {
-        total = readFromStdin(view, memory, iovsPtr, iovsLen);
+        total = readFromStdin(io, view, memory, iovsPtr, iovsLen);
       } else {
         const f = openFiles.get(fd);
         if (!f || f.type !== "file") return E_BADF;
-        total = readFromOpenFile(f, view, memory, iovsPtr, iovsLen);
+        total = readFromOpenFile(io, f, view, memory, iovsPtr, iovsLen);
         if (total < 0) return E_BADF;
       }
       view.setUint32(nreadPtr, total, true);
@@ -606,7 +629,7 @@ export function createWasiPreview1(options = {}) {
       const view = new DataView(instance.exports.memory.buffer);
       const memory = new Uint8Array(instance.exports.memory.buffer);
       const pseudo = { path: f.path, pos: Number(offset), append: false };
-      const total = writeToOpenFile(pseudo, view, memory, iovsPtr, iovsLen);
+      const total = writeToOpenFile(io, pseudo, view, memory, iovsPtr, iovsLen);
       view.setUint32(nwrittenPtr, total, true);
       return 0;
     },
