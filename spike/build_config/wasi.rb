@@ -84,6 +84,9 @@ MRuby::CrossBuild.new("wasi") do |conf|
   # Dir.exist? on top of wasi-libc's <dirent.h>, which the bridge's
   # WASI imports (path_open(O_DIRECTORY) / fd_readdir / ...) implement.
   conf.gem File.expand_path("../mrbgem/mruby-wasi-dir", __dir__)
+  # mruby-wasi-env provides ENV[] / ENV[]= / ENV.each / ... backed by
+  # wasi-libc's getenv/setenv/environ (populated from environ_get).
+  conf.gem File.expand_path("../mrbgem/mruby-wasi-env", __dir__)
 
   # We only need libmruby.a; the spike provides its own main via main/main.c
   conf.bins = []

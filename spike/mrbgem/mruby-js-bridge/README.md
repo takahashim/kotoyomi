@@ -17,7 +17,7 @@ mruby-js-bridge/
 └── wasm_spec/                # Self-contained tests (need a JS host to run)
     ├── spec_helper.rb        # Spec micro-framework
     ├── runner.mjs            # Node test runner
-    └── test_*.rb             # 12 test files, ~144 tests
+    └── test_*.rb             # 13 test files, ~167 tests
 ```
 
 The directory is `wasm_spec/` rather than `test/` to avoid mruby-test's
@@ -41,11 +41,10 @@ MRuby::CrossBuild.new("wasi") do |conf|
   conf.gem core: "mruby-time"     # optional (Time.now via WASI clock_time_get)
   conf.gem core: "mruby-random"   # optional (rand/Random via WASI random_get)
   conf.gem File.expand_path("path/to/mruby-js-bridge")
-  # Optional sibling gem — Dir.entries / Dir.mkdir / Dir.rmdir / Dir.exist?
-  # for Ruby code targeting the bundled wasi-preview1.js (or any WASI host
-  # that implements path_open(O_DIRECTORY) + fd_readdir + path_create_directory
-  # + path_remove_directory).
-  conf.gem File.expand_path("path/to/mruby-wasi-dir")
+  # Optional sibling gems — Ruby surface for WASI primitives that mruby
+  # core doesn't ship.
+  conf.gem File.expand_path("path/to/mruby-wasi-dir")  # Dir.entries / mkdir / rmdir / exist?
+  conf.gem File.expand_path("path/to/mruby-wasi-env")  # ENV[] / ENV[]= / each / keys / ...
 end
 ```
 
@@ -76,7 +75,7 @@ The adapter also exports a few host-side knobs:
 
 | Export | Purpose |
 |---|---|
-| `env` | object — set entries before `boot` to populate Ruby `ENV` (requires `mruby-env` mgem) |
+| `env` | object — set entries before `boot` to populate Ruby `ENV` (requires the sibling `mruby-wasi-env` gem) |
 | `args` | array — push entries before `boot` to populate Ruby `ARGV` |
 | `stdin` | object with `pushText(s)` / `bytes` — feed bytes to `STDIN.read` / `gets` |
 | `fs` | Map-like facade over the tree VFS (see below) |
@@ -174,7 +173,7 @@ MRUBY_JS_BRIDGE_WASM=/abs/path/to/your/mruby.wasm \
   node wasm_spec/runner.mjs
 ```
 
-Expected: `144/144 tests pass (209 assertions)`. Exit code 0 on success,
+Expected: `167/167 tests pass (235 assertions)`. Exit code 0 on success,
 1 on any failure.
 
 ## Dependencies
