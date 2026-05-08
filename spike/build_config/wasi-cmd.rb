@@ -35,8 +35,8 @@ MRuby::CrossBuild.new("wasi-cmd") do |conf|
   # parse on those versions.
   sjlj_flags = ["-mllvm", "-wasm-enable-sjlj",
                 "-mllvm", "-wasm-use-legacy-eh=false"]
-  stubs_dir = File.expand_path("../stubs", __dir__)
-  stub_flags = ["-isystem", stubs_dir, "-include", "#{stubs_dir}/wasi-shims.h"]
+  shim_dir = File.expand_path("../mrbgem/hal-wasi-io/include", __dir__)
+  stub_flags = ["-isystem", shim_dir, "-include", "#{shim_dir}/wasi-shims.h"]
   conf.cc.flags.concat(common_flags + sjlj_flags + stub_flags)
   conf.cxx.flags.concat(common_flags + sjlj_flags + stub_flags)
   conf.linker.flags.concat(common_flags)
@@ -56,15 +56,13 @@ MRuby::CrossBuild.new("wasi-cmd") do |conf|
   # hal-posix-io fallback). Without this, mruby-io would auto-load
   # hal-posix-io which references POSIX functions (dup, fork, ...) that
   # wasi-libc doesn't ship — making the wasm fail to link.
+  # hal-wasi-io also ships symbol stubs for dup/waitpid (mruby-io's io.c
+  # calls these directly, outside the HAL — they need real definitions
+  # at link time even though they're never invoked at runtime).
   conf.gem File.expand_path("../mrbgem/hal-wasi-io", __dir__)
   conf.gem core: "mruby-io"
   conf.gem core: "mruby-time"
   conf.gem core: "mruby-random"
-
-  # Symbol stubs for the few POSIX functions mruby-io's main io.c
-  # references directly (not via HAL): dup, waitpid. Shared with the
-  # JS-host build.
-  conf.gem File.expand_path("../mrbgem/mruby-wasi-stubs", __dir__)
 
   # Sibling sister-gems (host-agnostic).
   conf.gem File.expand_path("../mrbgem/mruby-wasi-dir", __dir__)

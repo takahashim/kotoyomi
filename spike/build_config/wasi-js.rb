@@ -35,11 +35,13 @@ MRuby::CrossBuild.new("wasi-js") do |conf|
   # mruby uses sjlj for exceptions and GC mark scan; modern browsers
   # (Chrome 95+, Safari 15.2+, FF 102+) support EH, so this is fine in practice.
   sjlj_flags = ["-mllvm", "-wasm-enable-sjlj"]
-  # Stub directory for POSIX headers wasi-sysroot lacks (e.g. pwd.h, sys/wait.h)
-  # plus a force-included shim that declares missing functions (dup, waitpid).
-  # Listed FIRST so it takes precedence over wasi-sysroot.
-  stubs_dir = File.expand_path("../stubs", __dir__)
-  stub_flags = ["-isystem", stubs_dir, "-include", "#{stubs_dir}/wasi-shims.h"]
+  # POSIX shim headers (live inside hal-wasi-io's include/): empty
+  # `pwd.h` / `sys/wait.h` for wasi-sysroot gaps, and `wasi-shims.h`
+  # which declares the missing function prototypes (dup, waitpid, ...)
+  # that mruby-io's io.c references. Listed FIRST so it takes precedence
+  # over wasi-sysroot.
+  shim_dir = File.expand_path("../mrbgem/hal-wasi-io/include", __dir__)
+  stub_flags = ["-isystem", shim_dir, "-include", "#{shim_dir}/wasi-shims.h"]
   conf.cc.flags.concat(common_flags + sjlj_flags + stub_flags)
   conf.cxx.flags.concat(common_flags + sjlj_flags + stub_flags)
   conf.linker.flags.concat(common_flags)
@@ -70,14 +72,12 @@ MRuby::CrossBuild.new("wasi-js") do |conf|
   # primitives through the HAL interface; unsupported ops (dup, fork,
   # umask, flock, getpwnam, ...) return ENOSYS at the HAL level without
   # leaving unresolved symbols at link time.
+  # hal-wasi-io also ships symbol stubs for the few POSIX functions
+  # (dup, waitpid) that mruby-io's main io.c calls directly outside the
+  # HAL — those compile-time references would otherwise leave unresolved
+  # symbols at link time.
   conf.gem File.expand_path("../mrbgem/hal-wasi-io", __dir__)
   conf.gem core: "mruby-io"
-
-  # mruby-io's main io.c directly calls a couple of POSIX functions
-  # (dup, waitpid) not routed through the HAL. mruby-wasi-stubs supplies
-  # ENOSYS-returning symbol stubs for those so the wasm links cleanly.
-  # Shared with the command build.
-  conf.gem File.expand_path("../mrbgem/mruby-wasi-stubs", __dir__)
 
   # mruby-method enables Object#method_missing dispatch (used by
   # JSBridge::Value to forward unknown method calls to JS).

@@ -37,7 +37,6 @@ spike/
 │           ├── spec_helper.rb
 │           ├── runner.mjs
 │           └── test_*.rb
-├── stubs/                  # POSIX header の最小スタブ
 ├── main/main.c             # mrb_open() のみ、JS が evalRuby で driving
 ├── app/                    # lib/*.rb の mruby ポート版 (Phase 2d)
 │   ├── dom.rb
