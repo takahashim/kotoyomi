@@ -72,6 +72,28 @@ function captureError(err) {
 /** Environment variables visible to Ruby's `ENV` / wasi-libc's getenv. */
 export const env = {};
 
+/** Command-line arguments visible to Ruby's `ARGV` / C's `argv`. The
+ *  first entry is conventionally the program name. main/main.c pushes
+ *  args[1..] into Ruby's ARGV. */
+export const args = ["mruby-js-bridge"];
+
+/** stdin buffer. `bytes` is consumed by fd_read on fd 0; assign to it
+ *  (or use `pushText`) before / between evalRuby calls.
+ *
+ *    stdin.pushText("first line\n")
+ *    evalRuby('puts STDIN.gets')   # => "first line"
+ */
+export const stdin = {
+  bytes: new Uint8Array(0),
+  pushText(text) {
+    const add = encoder.encode(text);
+    const merged = new Uint8Array(this.bytes.length + add.length);
+    merged.set(this.bytes);
+    merged.set(add, this.bytes.length);
+    this.bytes = merged;
+  },
+};
+
 /** Virtual read-only filesystem. Map of absolute path → Uint8Array. */
 export const fs = new Map();
 
@@ -453,9 +475,21 @@ const wasiImports = {
   fd_read(fd, iovsPtr, iovsLen, nreadPtr) {
     if (debug.trace) console.log(`[wasi] fd_read fd=${fd} iovsLen=${iovsLen}`);
     const view = new DataView(instance.exports.memory.buffer);
+    const memory = new Uint8Array(instance.exports.memory.buffer);
     if (fd === 0) {
-      // stdin: no input source; return EOF
-      view.setUint32(nreadPtr, 0, true);
+      // stdin: consume from the JS-side buffer. Returns 0 (EOF) when empty.
+      let total = 0;
+      for (let i = 0; i < iovsLen; i++) {
+        const ptr = view.getUint32(iovsPtr + i * 8, true);
+        const len = view.getUint32(iovsPtr + i * 8 + 4, true);
+        const remaining = stdin.bytes.length;
+        if (remaining <= 0) break;
+        const n = Math.min(len, remaining);
+        memory.set(stdin.bytes.subarray(0, n), ptr);
+        stdin.bytes = stdin.bytes.subarray(n);
+        total += n;
+      }
+      view.setUint32(nreadPtr, total, true);
       return 0;
     }
     const f = openFiles.get(fd);
@@ -465,7 +499,6 @@ const wasiImports = {
     }
     const data = fs.get(f.path);
     if (!data) return 8;
-    const memory = new Uint8Array(instance.exports.memory.buffer);
     let total = 0;
     for (let i = 0; i < iovsLen; i++) {
       const ptr = view.getUint32(iovsPtr + i * 8, true);
@@ -531,11 +564,27 @@ const wasiImports = {
     });
     return 0;
   },
-  args_sizes_get(c, s) {
+  // command-line args ------------------------------------------------------
+  args_sizes_get(countPtr, sizesPtr) {
     const view = new DataView(instance.exports.memory.buffer);
-    view.setUint32(c, 0, true); view.setUint32(s, 0, true); return 0;
+    let totalSize = 0;
+    for (const a of args) totalSize += encoder.encode(`${a}\0`).length;
+    view.setUint32(countPtr, args.length, true);
+    view.setUint32(sizesPtr, totalSize, true);
+    return 0;
   },
-  args_get() { return 0; },
+  args_get(argvPtr, bufPtr) {
+    const view = new DataView(instance.exports.memory.buffer);
+    const memory = new Uint8Array(instance.exports.memory.buffer);
+    let offset = bufPtr;
+    args.forEach((a, i) => {
+      view.setUint32(argvPtr + i * 4, offset, true);
+      const bytes = encoder.encode(`${a}\0`);
+      memory.set(bytes, offset);
+      offset += bytes.length;
+    });
+    return 0;
+  },
   // clock -------------------------------------------------------------------
   clock_time_get(id, _precision, ptr) {
     const view = new DataView(instance.exports.memory.buffer);

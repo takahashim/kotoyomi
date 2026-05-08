@@ -13,7 +13,7 @@
 import { readFile, readdir } from "node:fs/promises";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { dirname, join, resolve } from "node:path";
-import { boot, evalRuby, env, fs } from "../js/adapter.js";
+import { boot, evalRuby, env, fs, stdin, args } from "../js/adapter.js";
 
 // --- Browser-ish env shim --------------------------------------------------
 // Tests use Date / Map / Set / Error / Promise / EventTarget / setTimeout —
@@ -37,6 +37,8 @@ const wasmUrl = process.env.MRUBY_JS_BRIDGE_WASM
 env.SPEC_RUNNER = "wasm_spec";
 fs.set("/spec_fixture.txt", new TextEncoder().encode("spec\nfixture\nlines\n"));
 fs.set("/spec_binary.dat", new Uint8Array([0xDE, 0xAD, 0xBE, 0xEF]));
+stdin.pushText("stdin payload\n");
+args.push("--smoke", "test_wasi", "fixture");
 
 await boot(wasmUrl);
 

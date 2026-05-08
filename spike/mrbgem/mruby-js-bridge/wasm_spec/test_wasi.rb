@@ -44,6 +44,34 @@ Spec.describe "WASI: random_get → Random / rand" do
   end
 end
 
+Spec.describe "WASI: stdin → STDIN.read / .gets" do
+  Spec.assert "STDIN.read consumes the host-provided buffer" do
+    # The runner pre-pushes "stdin payload\n" via stdin.pushText().
+    # Note: STDIN is a single shared resource — first read consumes,
+    # subsequent reads see EOF.
+    s = STDIN.read
+    Spec.assert_equal "stdin payload\n", s
+  end
+
+  Spec.assert "STDIN.read after exhaustion returns ''" do
+    Spec.assert_equal "", STDIN.read
+  end
+end
+
+Spec.describe "WASI: args → ARGV" do
+  Spec.assert "ARGV is populated from JS-side args" do
+    # The runner sets `args.push("--smoke", "test_wasi", "fixture")`.
+    Spec.assert_true ARGV.length >= 3
+    Spec.assert_equal "--smoke", ARGV[0]
+    Spec.assert_equal "test_wasi", ARGV[1]
+  end
+
+  Spec.assert "ARGV.first is not the program name" do
+    # We skip argv[0] (program name) like CRuby does.
+    Spec.assert_false ARGV.first == "mruby-js-bridge"
+  end
+end
+
 Spec.describe "WASI: filesystem → File.read / File.open" do
   Spec.assert "File.read returns the bytes the host injected via fs.set" do
     # The runner pre-populates these; see wasm_spec/runner.mjs.
