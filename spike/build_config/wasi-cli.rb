@@ -28,7 +28,13 @@ MRuby::CrossBuild.new("wasi-cli") do |conf|
   conf.archiver.command = ar
 
   common_flags = ["--target=#{target}", "--sysroot=#{sysroot}"]
-  sjlj_flags = ["-mllvm", "-wasm-enable-sjlj"]
+  # `-wasm-use-legacy-eh=false` switches clang's SJLJ lowering to the
+  # modern Wasm Exception Handling proposal (`try_table`) instead of
+  # the legacy `try`/`catch` instructions. wasmtime ≥36 only supports
+  # the modern form, so this flag is required for the CLI build to
+  # parse on those versions.
+  sjlj_flags = ["-mllvm", "-wasm-enable-sjlj",
+                "-mllvm", "-wasm-use-legacy-eh=false"]
   stubs_dir = File.expand_path("../stubs", __dir__)
   stub_flags = ["-isystem", stubs_dir, "-include", "#{stubs_dir}/wasi-shims.h"]
   conf.cc.flags.concat(common_flags + sjlj_flags + stub_flags)

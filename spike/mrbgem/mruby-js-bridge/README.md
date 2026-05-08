@@ -220,20 +220,38 @@ Tested against **mruby 4.0.0**.
 
 The wasm built by this gem (and the sibling `mruby-wasm-cli`) uses
 clang's SJLJ implementation, which lowers `setjmp`/`longjmp` to the
-WebAssembly Exception Handling proposal. Runtime support varies:
+WebAssembly Exception Handling proposal:
 
-| Runtime | Supports our wasm? | Notes |
-|---|---|---|
-| **Node.js (`node:wasi`)** | ✓ | V8 has full EH support |
-| Browser (Chrome / Safari / Firefox) | ✓ | V8 / JSC / SpiderMonkey all have EH |
-| **Bun** (WASI) | ✓ (expected) | JSC-based |
-| Cloudflare Workers / V8-based edge | ✓ (expected) | V8-based |
-| **wasmtime ≥36** | ✗ | Cranelift backend doesn't yet implement the `Throw` instruction; even with `-W exceptions=y`. Tracking: upstream wasmtime |
-| **wasmer 7.x** | ✗ | EH proposal not yet implemented |
+- **JS-host build** (`mruby.wasm`) uses **legacy** EH (default clang
+  behaviour): `try`/`catch`/`throw` instructions. Widely supported by
+  V8-based hosts.
+- **CLI build** (`mruby-cli.wasm`) uses **modern** EH (`try_table`
+  with `exnref`) via `-mllvm -wasm-use-legacy-eh=false`. Required for
+  wasmtime ≥37.
 
-For CLI / non-browser use today, **`node:wasi` is the recommended
-host**. The CLI build (`make cli-link` → `host/mruby-cli.wasm`) ships
-`host/run-cli-node.mjs` which drives it via Node's built-in WASI.
+Tested runtime support:
+
+| Runtime | JS-host build | CLI build | Notes |
+|---|---|---|---|
+| **Node.js (`WebAssembly.compile`)** | ✓ default | ✓ with `--experimental-wasm-exnref` | V8 has full EH support |
+| Browser (Chrome / Safari / Firefox) | ✓ | ✓ (modern EH stable in recent versions) | V8 / JSC / SpiderMonkey |
+| **Bun** | ✓ (expected) | ✓ (expected) | JSC-based |
+| Cloudflare Workers / V8-based edge | ✓ (expected) | ✓ (expected) | V8-based |
+| **wasmtime ≥37** | n/a | **✓** with `-W exceptions=y` | Cranelift's modern EH implementation landed in v37 |
+| wasmtime ≤36 | n/a | ✗ | Cranelift's `Throw` not implemented before v37 |
+| **wasmer 7.x** | n/a | ✗ | EH proposal not yet implemented |
+| **wazero** | n/a | ✗ | EH proposal not yet implemented |
+
+Run the CLI build:
+
+```bash
+# Via Node's built-in WASI
+node --experimental-wasi-unstable-preview1 --experimental-wasm-exnref \
+    host/run-cli-node.mjs script.rb
+
+# Via wasmtime ≥37
+wasmtime -W exceptions=y --dir=. host/mruby-cli.wasm script.rb
+```
 
 ## Related projects
 

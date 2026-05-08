@@ -42,7 +42,7 @@ SYSROOT := $(WASI_SDK_DIR)/share/wasi-sysroot
 TARGET := wasm32-wasip1
 
 .PHONY: all download wasi-sdk mruby link serve test dist clean distclean \
-        mruby-cli cli-link smoke-cli dist-cli dist-all smoke-all
+        mruby-cli cli-link smoke-cli smoke-cli-wasmtime dist-cli dist-all smoke-all
 
 all: link
 
@@ -189,8 +189,37 @@ $(HOST_WASM_CLI): $(LIBMRUBY_CLI) | $(HOST_DIR)
 # this bytecode and is always available because the JS-host workflow
 # already requires Node.
 smoke-cli: cli-link
-	@node --experimental-wasi-unstable-preview1 host/run-cli-node.mjs 2>&1 \
+	@node --experimental-wasi-unstable-preview1 --experimental-wasm-exnref \
+	    host/run-cli-node.mjs 2>&1 \
 	  | grep -v ExperimentalWarning | grep -v "Use \`node"
+
+# `make smoke-cli-wasmtime` — alternative smoke using `wasmtime` directly
+# (≥37 required for the modern EH proposal `try_table` instructions
+# clang now emits via `-mllvm -wasm-use-legacy-eh=false`). Skips
+# gracefully if wasmtime isn't installed.
+smoke-cli-wasmtime: cli-link
+	@if command -v wasmtime >/dev/null 2>&1; then \
+	  WT_VERSION=$$(wasmtime --version | awk '{print $$2}'); \
+	  WT_MAJOR=$${WT_VERSION%%.*}; \
+	  if [ "$$WT_MAJOR" -lt 37 ]; then \
+	    echo "[smoke-cli-wasmtime] wasmtime $$WT_VERSION found, but ≥37 required for modern EH support."; \
+	    echo "[smoke-cli-wasmtime] (current binary at $$(command -v wasmtime) — upgrade or skip)"; \
+	    exit 0; \
+	  fi; \
+	  echo "[smoke-cli-wasmtime] running selftest via wasmtime $$WT_VERSION..."; \
+	  TMPDIR=$$(mktemp -d); \
+	  printf 'puts "[smoke-wt] hello from mruby-cli.wasm via wasmtime"\n\
+puts "[smoke-wt] Time.now=#{Time.now}"\n\
+puts "[smoke-wt] ENV[SMOKE_WT]=#{ENV[\"SMOKE_WT\"]}"\n\
+File.open("'$$TMPDIR'/out.txt", "w") { |f| f.write("inside-wasm\\n") }\n\
+puts "[smoke-wt] File.read=#{File.read(\"'$$TMPDIR'/out.txt\").strip}"\n\
+puts "[smoke-wt] OK"\n' > $$TMPDIR/selftest.rb; \
+	  wasmtime -W exceptions=y --env SMOKE_WT=yes --dir=$$TMPDIR $(HOST_WASM_CLI) $$TMPDIR/selftest.rb; \
+	  rm -rf $$TMPDIR; \
+	else \
+	  echo "[smoke-cli-wasmtime] wasmtime not found — skipping. Install via:"; \
+	  echo "  curl https://wasmtime.dev/install.sh -sSf | bash"; \
+	fi
 
 dist-cli: cli-link
 	@rm -rf $(DIST_DIR_CLI)
@@ -209,8 +238,12 @@ dist-cli: cli-link
 	  '## Usage' \
 	  '' \
 	  '```bash' \
-	  '# Node has built-in WASI (always available, V8 has full EH support):' \
-	  'node --experimental-wasi-unstable-preview1 run-cli-node.mjs script.rb' \
+	  '# wasmtime ≥37 (modern Wasm EH proposal landed in Cranelift):' \
+	  'wasmtime -W exceptions=y --dir=. mruby.wasm script.rb' \
+	  '' \
+	  '# Node.js — needs --experimental-wasm-exnref for modern EH:' \
+	  'node --experimental-wasi-unstable-preview1 --experimental-wasm-exnref \\' \
+	  '    run-cli-node.mjs script.rb' \
 	  '```' \
 	  '' \
 	  '`mruby.wasm` is `mruby-bin-mruby` compiled to wasm32-wasip1, so it' \
@@ -219,15 +252,15 @@ dist-cli: cli-link
 	  '' \
 	  '## Runtime compatibility' \
 	  '' \
-	  'clang lowers setjmp/longjmp (which mruby uses for exceptions and' \
-	  'GC mark scan) to the WebAssembly Exception Handling proposal.' \
-	  'Currently only V8-based runtimes implement the proposal:' \
+	  'Built with the modern Wasm Exception Handling proposal (`try_table`)' \
+	  'via `-mllvm -wasm-use-legacy-eh=false`. Tested runtimes:' \
 	  '' \
-	  '- ✓ Node.js (`node:wasi`), browsers, Bun, Cloudflare Workers' \
-	  '- ✗ wasmtime ≥36 (Cranelift backend lacks `Throw`)' \
+	  '- ✓ wasmtime ≥37 (with `-W exceptions=y`)' \
+	  '- ✓ Node.js (with `--experimental-wasm-exnref`)' \
+	  '- ✓ V8-based hosts (browsers, Bun, Cloudflare Workers, …)' \
 	  '- ✗ wasmer 7.x (EH proposal not yet implemented)' \
-	  '' \
-	  'Use `node:wasi` for now. wasmtime/wasmer support is upstream-blocked.' \
+	  '- ✗ wazero (EH proposal not yet implemented)' \
+	  '- ✗ wasmtime ≤36 (Cranelift Throw not implemented before v37)' \
 	  '' \
 	  '## What is included' \
 	  '' \
@@ -256,15 +289,19 @@ dist-cli: cli-link
 	@echo "Built dist/mruby-wasm-cli/ (version $(DIST_VERSION)):"
 	@ls -lh $(DIST_DIR_CLI)
 	@echo ""
-	@echo "Try it (Node has built-in WASI; wasmtime ≥36 currently can't load"
-	@echo "the legacy SJLJ exception bytecode clang emits — use Node for now):"
-	@echo "  node --experimental-wasi-unstable-preview1 host/run-cli-node.mjs path/to/script.rb"
+	@echo "Try it on wasmtime ≥37:"
+	@echo "  wasmtime -W exceptions=y --dir=. dist/mruby-wasm-cli/mruby.wasm script.rb"
+	@echo ""
+	@echo "Or via Node (needs --experimental-wasm-exnref for modern EH):"
+	@echo "  node --experimental-wasi-unstable-preview1 --experimental-wasm-exnref \\"
+	@echo "      host/run-cli-node.mjs path/to/script.rb"
 
 # `make smoke-all` — exercise both build variants end-to-end:
 #   1. wasm_spec under the JS-host wasm
 #   2. CLI wasm via node:wasi
+#   3. CLI wasm via wasmtime (skipped gracefully if not installed)
 # Used as a single `make smoke-all` gate before tagging a release.
-smoke-all: test smoke-cli
+smoke-all: test smoke-cli smoke-cli-wasmtime
 	@echo ""
 	@echo "[smoke-all] all checks passed"
 
