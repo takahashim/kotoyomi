@@ -1,0 +1,13 @@
+{
+  "name": "kotoyomi",
+  "version": "0.0.1",
+  "private": true,
+  "type": "module",
+  "description": "ことよみ — mruby-wasm-runtime で動かす日本語の詩のプレイヤー",
+  "scripts": {
+    "smoke": "node examples/run-node.mjs"
+  },
+  "dependencies": {
+    "@takahashim/mruby-wasm-js": "^0.1.0"
+  }
+}

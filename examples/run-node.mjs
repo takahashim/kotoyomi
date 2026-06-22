@@ -8,7 +8,7 @@
 
 import { readFile } from "node:fs/promises";
 import { fileURLToPath } from "node:url";
-import { createVM } from "../mrbgem/mruby-wasm-js/js/index.js";
+import { createVM } from "@takahashim/mruby-wasm-js";
 
 // --- Minimal DOM/Audio/Event shims -----------------------------------------
 class FakeNode {
@@ -77,14 +77,14 @@ globalThis.fetch = async (url) => {
 };
 
 // --- Boot + load app -------------------------------------------------------
-const vm = await createVM({ wasm: new URL("./mruby-js.wasm", import.meta.url).href });
+const vm = await createVM({ wasm: import.meta.resolve("@takahashim/mruby-wasm-js/wasm") });
 
 // Load the canonical kotoyomi lib from the repo root. Since Phase 2e
 // migrated lib/ to mruby + JS, the same files run here under Node
 // against the gem (with a fake DOM/Audio shim above).
 const APP = ["lib/dom.rb", "lib/renderer.rb", "lib/player.rb", "lib/kotoyomi.rb"];
 for (const rel of APP) {
-  const src = await readFile(new URL(`../../${rel}`, import.meta.url), "utf8");
+  const src = await readFile(new URL(`../${rel}`, import.meta.url), "utf8");
   console.log(`[load] ${rel}`);
   const rc = vm.eval(src);
   if (rc !== 0) {

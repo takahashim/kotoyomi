@@ -27,7 +27,7 @@ jobs:
       - name: Stage site
         run: |
           mkdir -p _site
-          cp -r index.html app.css src lib works vendor _site/
+          cp -r index.html app.css src lib works _site/
           touch _site/.nojekyll
 
       - name: Configure Pages

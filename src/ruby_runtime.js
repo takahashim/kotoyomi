@@ -1,17 +1,16 @@
-// kotoyomi のランタイム = mruby + mruby-wasm-js (JS-host edition)。ruby.wasm
-// + js gem の旧構成は ../vendor/mruby-wasm-js/ にバンドル化された自前
-// パッケージに置換済み。
+// kotoyomi のランタイム = mruby + @takahashim/mruby-wasm-js (npm)。
+// ブラウザでは works/sample/index.html の importmap 経由で CDN URL に解決され、
+// Node では package.json の依存として node_modules から解決される。
 //
 // 起動の流れ:
-//   1. createVM({ wasm }) で mruby-js.wasm を instantiate (index.js の WASM
-//      imports を満たすことで JSBridge.* / WASI fd_write 等が動くようになる)
+//   1. createVM({ wasm }) で mruby-js.wasm を instantiate
 //   2. lib/*.rb を fetch して 1 ファイルずつ vm.eval に流す
 //   3. vm.eval("Kotoyomi.start") で App を起動
 //
 // `vm.eval` は内部で source を Fiber でくるむので、Ruby 側の
 // `value.await` がそのまま動く (例: lib/kotoyomi.rb の wait_for_track_load)。
 
-import { createVM } from "../vendor/mruby-wasm-js/index.js";
+import { createVM } from "@takahashim/mruby-wasm-js";
 
 const RUBY_SOURCES = [
   "lib/dom.rb",
@@ -20,8 +19,9 @@ const RUBY_SOURCES = [
   "lib/kotoyomi.rb",
 ].map((path) => new URL(`../${path}`, import.meta.url).href);
 
-const WASM_URL =
-  new URL("../vendor/mruby-wasm-js/mruby-js.wasm", import.meta.url).href;
+// import.meta.resolve は importmap (browser) / package.json#exports (Node)
+// 両方を統一インタフェースで解決する。
+const WASM_URL = import.meta.resolve("@takahashim/mruby-wasm-js/wasm");
 
 export async function bootRuby() {
   const vm = await createVM({ wasm: WASM_URL });

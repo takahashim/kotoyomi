@@ -18,6 +18,9 @@
 # Logs
 *.log
 
+# npm
+node_modules/
+
 # Windows
 Thumbs.db
 ehthumbs.db

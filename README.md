@@ -115,8 +115,7 @@ cue 本文の各行は `<p class="stanza-line">` として `<div class="stanza">
 ## アーキテクチャと Ruby ランタイム
 
 - **`lib/*.rb`** — Ruby で書いたプレイヤー本体 (DOM、Renderer、Player、Kotoyomi)
-- **`src/ruby_runtime.js`** — mruby-js.wasm を boot して `lib/*.rb` を流し込むだけのスターター
-- **`vendor/mruby-wasm-js/`** — mruby + 自前 mrbgem `mruby-wasm-js` を WASM 化したバンドル (再配布可能、Phase A の `make dist` で生成)
-- **`spike/`** — gem 開発のための隔離環境 (mruby cross-build、wasm_spec、smoke runner)
+- **`src/ruby_runtime.js`** — `mruby-js.wasm` を boot して `lib/*.rb` を流し込むだけのスターター
+- **`@takahashim/mruby-wasm-js`** (npm) — mruby + 自前 mrbgem `mruby-wasm-js` を WASM 化したバンドル。ブラウザは `works/sample/index.html` の importmap で CDN (jsDelivr) に解決、Node は `npm install` で `node_modules/` から解決。元の開発リポジトリは [`takahashim/mruby-wasm-runtime`](https://github.com/takahashim/mruby-wasm-runtime)
 
 ランタイムを ruby.wasm ではなく mruby に切り替えた経緯と trade-off は [`docs/runtime-tradeoffs.md`](./docs/runtime-tradeoffs.md) を参照。フェーズ別の進行ログは [`docs/phase1-spike-summary.md`](./docs/phase1-spike-summary.md)、[`docs/phase2-spike-summary.md`](./docs/phase2-spike-summary.md) にあります。
