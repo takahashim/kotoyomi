@@ -422,6 +422,25 @@ audio {
   margin: 0;
 }
 
+/* 横書きモード。既定(上の定義)は縦書き。vtt の reading_direction="horizontal"
+   または frontmatter reading_direction: horizontal で .poem に
+   data-reading-direction="horizontal" が付く。横書きでは行を上→下に積み
+   (.stanza.active の flex column はブロック軸追従なのでそのまま機能)、横 22
+   文字でコンテナ幅いっぱいにする。 */
+.poem[data-reading-direction="horizontal"] {
+  writing-mode: horizontal-tb;
+  justify-content: center; /* 連を横方向中央へ */
+  align-items: center; /* 連を縦方向中央へ */
+}
+
+.poem[data-reading-direction="horizontal"] .stanza {
+  font-size: calc(100cqw / 22); /* 横 22 文字 = コンテナ幅いっぱい */
+}
+
+.poem[data-reading-direction="horizontal"] .stanza.active {
+  align-items: center; /* 各行を左右中央に */
+}
+
 /* 自前の再生進捗バー(再生済み / 未再生 を 2 色で塗り分け) */
 .progress {
   width: 100%;
@@ -629,6 +648,9 @@ html.show-notes .notes {
   display: flex;
   flex-direction: column;
   min-height: 0;
+  /* グリッド項目が中身の min-content 幅で広がらないように(巨大な見出しで
+     列がはみ出し、右カラムが画面外へ押し出されるのを防ぐ)。 */
+  min-width: 0;
 }
 
 .presenter-label {
@@ -706,8 +728,10 @@ html.show-notes .notes {
   margin: 0 0 0.3em;
 }
 
-.preview .slide-html h1::after {
-  display: none; /* サムネではアクセントライン不要 */
+/* 小さなサムネ(続くページ)ではアクセントラインは省く。現在スライドの
+   プレビューは通常スライドと同じく赤ラインを出す。 */
+.preview-small .slide-html h1::after {
+  display: none;
 }
 
 .preview .slide-html h2 {
@@ -738,6 +762,59 @@ html.show-notes .notes {
 .preview-small .slide-html p,
 .preview-small .slide-html li {
   font-size: 0.85rem;
+}
+
+/* 表紙・章扉は本番では vw 基準の特大見出しだが、プレビューでは小さく固定する
+   (ビューポート幅基準で巨大化し、ペインからはみ出すのを防ぐ)。詳細度を
+   レイアウト規則より高くして勝たせる。 */
+.preview-current .slide-body[data-layout="cover"] .slide-html h1,
+.preview-current .slide-body[data-layout="section"] .slide-html h1 {
+  font-size: 2.2rem;
+}
+
+.preview-small .slide-body[data-layout="cover"] .slide-html h1,
+.preview-small .slide-body[data-layout="section"] .slide-html h1 {
+  font-size: 1.15rem;
+}
+
+/* 現在スライドのプレビューでも、表紙・章扉・小扉は通常ビューと同じく縦中央寄せ
+   にする(.slide の :has() 中央寄せは .preview-current には効かないため再指定)。
+   safe: 内容が高いときは上端から並べて切れを防ぐ。 */
+.preview-current:has(.slide-body[data-layout="cover"]),
+.preview-current:has(.slide-body[data-layout="section"]),
+.preview-current:has(.slide-body[data-layout="subsection"]) {
+  display: flex;
+  flex-direction: column;
+  justify-content: safe center;
+}
+
+/* 背景色も通常ビュー(.slide:has(…))と揃える。テーマごとに別色。 */
+[data-theme="dark"] .preview-current:has(.slide-body[data-layout="cover"]) {
+  background: #102733;
+}
+
+[data-theme="dark"] .preview-current:has(.slide-body[data-layout="section"]) {
+  background: #2a1d33;
+}
+
+[data-theme="default"] .preview-current:has(.slide-body[data-layout="cover"]) {
+  background: #fff0f1;
+}
+
+[data-theme="default"] .preview-current:has(.slide-body[data-layout="section"]) {
+  background: #eef3ff;
+}
+
+.preview-current:has(.slide-body[data-layout="subsection"]) {
+  background: #eef2f8;
+}
+
+[data-theme="dark"] .preview-current:has(.slide-body[data-layout="subsection"]) {
+  background: #1f2e2a;
+}
+
+[data-theme="default"] .preview-current:has(.slide-body[data-layout="subsection"]) {
+  background: #eefaf0;
 }
 
 .presenter-notes {
