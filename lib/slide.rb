@@ -15,13 +15,14 @@ module Kotoyomi
   # スライド離脱時は data-each の keyed reconciler が unmount を呼び、
   # cleanup(audio.pause / Blob revoke)・listener・effect が自動解放される。
   class Slide < Lilac::Component
-    prop :index,   Integer
-    prop :html,    String, default: ""
-    prop :layout,  String, default: nil
-    prop :regions, String, default: ""
-    prop :notes,   String, default: nil
-    prop :audio,   String, default: nil
-    prop :vtt,     String, default: nil
+    prop :index,             Integer
+    prop :html,              String, default: ""
+    prop :layout,            String, default: nil
+    prop :regions,           String, default: ""
+    prop :notes,             String, default: nil
+    prop :audio,             String, default: nil
+    prop :vtt,               String, default: nil
+    prop :reading_direction, String, default: nil
 
     def setup
       @stanzas = signal([])
