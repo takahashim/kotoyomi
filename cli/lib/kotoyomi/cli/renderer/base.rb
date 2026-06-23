@@ -2,8 +2,22 @@
 
 class Kotoyomi::CLI
   module Renderer
+    # RedQuilt::Renderer::HTML の内部 @out バッファに依存する操作を隔離。
+    # RedQuilt が public な fragment rendering API を提供したら置き換える。
+    module RedQuiltBufferSwap
+      def render_fragment(node_ids)
+        saved = @out
+        @out = +""
+        node_ids.each { |id| render_node(id) }
+        @out
+      ensure
+        @out = saved
+      end
+    end
+
     # Common base for the slide renderers.
     class Base < RedQuilt::Renderer::HTML
+      include RedQuiltBufferSwap
       def initialize(document, title: "", lang: "en")
         super(document)
         @title = title
@@ -36,25 +50,6 @@ class Kotoyomi::CLI
           }
           block_given? ? view.merge(yield(slide)) : view
         end
-      end
-
-      # Render a set of content node ids to an HTML fragment.
-      def render_fragment(node_ids)
-        with_fresh_buffer do
-          node_ids.each { |node_id| render_node(node_id) }
-        end
-      end
-
-      # Swap in a clean output buffer for the duration of the block, returning
-      # what was accumulated and restoring the previous buffer (even on error).
-      # Isolates our dependency on RedQuilt's internal `@out` accumulator here.
-      def with_fresh_buffer
-        saved_out = @out
-        @out = +""
-        yield
-        @out
-      ensure
-        @out = saved_out
       end
     end
   end
