@@ -64,7 +64,7 @@ class Kotoyomi::CLI
     MD
 
     def initialize(target, template_root:, stdout: $stdout, stderr: $stderr)
-      @target = File.expand_path(target)
+      @project = Project.new(target)
       @template_root = template_root
       @stdout = stdout
       @stderr = stderr
@@ -72,17 +72,30 @@ class Kotoyomi::CLI
 
     # 生成して 0 を返す。既存の非空ディレクトリには展開しない(1 を返す)。
     def generate
-      if File.exist?(@target) && !empty_dir?(@target)
-        @stderr.puts "kotoyomi: #{@target} は既に存在し空ではありません"
+      if File.exist?(@project.root) && !empty_dir?(@project.root)
+        @stderr.puts "kotoyomi: #{@project.root} は既に存在し空ではありません"
         return 1
       end
 
       copy_runtime
-      FileUtils.mkdir_p(File.join(@target, "src", "assets"))
-      FileUtils.mkdir_p(File.join(@target, "public", "viewer", "assets"))
-      write(File.join(@target, "src", "deck.md"), STARTER_DECK)
-      keep(File.join(@target, "src", "assets"))
-      keep(File.join(@target, "public", "viewer", "assets"))
+      FileUtils.mkdir_p(@project.assets_src)
+      FileUtils.mkdir_p(@project.assets_dst)
+      write(@project.deck_path, STARTER_DECK)
+      keep(@project.assets_src)
+      keep(@project.assets_dst)
+      0
+    end
+
+    # 既存プロジェクトの public/ ランタイム(index.html / app.css / src / lib /
+    # vendor/lilac / viewer/*.html)だけ最新の雛形で上書きする。src/ と build 生成物
+    # (viewer/slides.json, viewer/assets/)は触らない。kotoyomi を更新したあとに使う。
+    def upgrade
+      unless @project.public?
+        @stderr.puts "kotoyomi: #{@project.public_dir} がありません(kotoyomi プロジェクトで実行してください)"
+        return 1
+      end
+
+      copy_runtime
       0
     end
 
@@ -93,7 +106,7 @@ class Kotoyomi::CLI
     end
 
     def copy_runtime
-      public_dir = File.join(@target, "public")
+      public_dir = @project.public_dir
       RUNTIME_FILES.each do |rel|
         src = File.join(@template_root, rel)
         dst = File.join(public_dir, rel)
