@@ -2,8 +2,22 @@
 
 class Kotoyomi::CLI
   class Partitioner
+    # RedQuilt 内部 API(arena)への依存を1箇所に閉じ込める。document インスタンスに
+    # fence_info / node_text を追加し、クラス全体はこれ経由でアクセスする。
+    # RedQuilt が public API を提供したらこの prepend は削除できる。
+    module ArenaAccess
+      def fence_info(node_id)
+        arena.str2(node_id).to_s
+      end
+
+      def node_text(node_id)
+        arena.text(node_id).to_s
+      end
+    end
+
     def initialize(document)
       @document = document
+      @document.singleton_class.prepend(ArenaAccess) unless @document.respond_to?(:fence_info)
     end
 
     # Returns an Array of Kotoyomi::CLI::Slide.
@@ -54,16 +68,21 @@ class Kotoyomi::CLI
     private
 
     # Detects a ` ```vtt audio="..." ` fenced code block and returns
-    # { audio:, vtt: }; nil for any other node. The fence body is plain WebVTT
-    # (timing + text), which the runtime player renders as the synced content.
+    # { audio:, vtt:, reading_direction: }; nil for any other node. The fence
+    # body is plain WebVTT (timing + text), rendered as the synced content.
     def player_block(node)
       return nil unless node.type == :code_block
 
-      arena = @document.arena
-      info = arena.str2(node.node_id).to_s
+      info = @document.fence_info(node.node_id)
       return nil unless info.split.first == "vtt"
 
-      { audio: parse_fence_attrs(info)["audio"], vtt: arena.text(node.node_id).to_s }
+      attrs = parse_fence_attrs(info)
+      {
+        audio: attrs["audio"],
+        vtt: @document.node_text(node.node_id),
+        # 縦書き/横書き。そのスライドだけの上書き(無ければ frontmatter 既定)。
+        reading_direction: attrs["reading_direction"]
+      }
     end
 
     # Parses `key="value"` pairs from a fence info string (e.g.
