@@ -1,16 +1,25 @@
 module Kotoyomi
+  # WebVTT cue 群を、Lilac の data-each に渡すデータモデルへ変換する純ロジック。
+  # DOM には一切触れない (描画は HTML 側の data-each ディレクティブが担う)。
+  #
+  # 返す形:
+  #   [{ "id" => "c1",
+  #      "lines" => [{ "n" => 0, "text" => "あさ" }, { "n" => 1, "text" => "ゆきが" }] },
+  #    ...]
+  #
+  # active 状態 (どの連を光らせるか) はここでは持たない。App 側で各連に
+  # Signal を足し、再生位置に応じて flip する。
   class Renderer
-    def initialize(cues, container)
+    def initialize(cues)
       @cues = cues
-      @container = container
     end
 
-    # 連ごとの Element を生成・追加し、Element の配列を返す。
-    def render
-      @container.clear
-      stanzas = each_cue.with_index.map { |cue, i| build_stanza(cue, i) }
-      stanzas.each { |stanza| @container.append(stanza) }
-      stanzas
+    def to_stanzas
+      each_cue.with_index.map do |cue, index|
+        cue_id = cue[:id].to_s
+        stanza_id = cue_id.empty? ? "stanza-#{index + 1}" : cue_id
+        { "id" => stanza_id, "lines" => to_lines(cue) }
+      end
     end
 
     private
@@ -21,14 +30,9 @@ module Kotoyomi
       @cues[:length].to_i.times { |i| yield @cues[i] }
     end
 
-    def build_stanza(cue, index)
-      cue_id = cue[:id].to_s
-      stanza_id = cue_id.empty? ? "stanza-#{index + 1}" : cue_id
-
-      DOM.create(:div, id: stanza_id, class: "stanza", data: { startTime: cue[:startTime] }) do |div|
-        cue[:text].to_s.split("\n").each do |line|
-          div.append(DOM.create(:p, class: "stanza-line", text: line))
-        end
+    def to_lines(cue)
+      cue[:text].to_s.split("\n").each_with_index.map do |line, n|
+        { "n" => n, "text" => line }
       end
     end
   end

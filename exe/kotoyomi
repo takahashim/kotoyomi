@@ -1,0 +1,9 @@
+#!/usr/bin/env ruby
+# frozen_string_literal: true
+
+# kotoyomi のビルド時 CLI(MRI)。Markdown デッキ → slides.json / HTML。
+# 依存 gem(red_quilt 等)は bundler 経由。自前の lib は cli/lib を load path に。
+$LOAD_PATH.unshift(File.expand_path("../cli/lib", __dir__))
+require "kotoyomi/cli"
+
+exit Kotoyomi::CLI.run(ARGV)
