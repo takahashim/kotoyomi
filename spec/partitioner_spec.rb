@@ -99,8 +99,15 @@ RSpec.describe Kotoyomi::CLI::Partitioner do
       slides = Kotoyomi::CLI::Partitioner.new(parse_markdown(player_md)).partition
       expect(slides[0][:player]).to eq(
         audio: "poems/sample.mp3",
-        vtt: "WEBVTT\n\n00:00.000 --> 00:00.500\nあさ\n"
+        vtt: "WEBVTT\n\n00:00.000 --> 00:00.500\nあさ\n",
+        reading_direction: nil
       )
+    end
+
+    it "reads reading_direction from the vtt fence" do
+      md = "```vtt audio=\"a.mp3\" reading_direction=\"horizontal\"\nWEBVTT\n\n00:00.000 --> 00:01.000\nx\n```"
+      slides = Kotoyomi::CLI::Partitioner.new(parse_markdown(md)).partition
+      expect(slides[0][:player][:reading_direction]).to eq("horizontal")
     end
 
     it "does not add the ```vtt block to content_ids" do
