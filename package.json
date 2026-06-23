@@ -3,11 +3,11 @@
   "version": "0.0.1",
   "private": true,
   "type": "module",
-  "description": "ことよみ — mruby-wasm-runtime で動かす日本語の詩のプレイヤー",
+  "description": "ことよみ — Lilac (mruby-wasm) で動かす日本語の詩のプレイヤー",
   "scripts": {
-    "smoke": "node examples/run-node.mjs"
+    "smoke": "node --experimental-wasm-exnref examples/run-node.mjs && node --experimental-wasm-exnref examples/run-presenter.mjs"
   },
-  "dependencies": {
-    "@takahashim/mruby-wasm-js": "^0.1.0"
+  "devDependencies": {
+    "happy-dom": "^15.11.7"
   }
 }

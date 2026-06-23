@@ -1,0 +1,60 @@
+<!DOCTYPE html>
+<html lang="ja">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Kotoyomi 印刷ビュー</title>
+    <link rel="stylesheet" href="../app.css" />
+    <!-- 描画前の既定テーマ。実際は frontmatter の theme: が deck 起動時に上書き。 -->
+    <script>
+      document.documentElement.dataset.theme = "default";
+    </script>
+  </head>
+  <body class="printing">
+    <!-- 印刷(PDF)ビュー: 全スライドを並べ、@media print が 1 枚 = 1 ページに。
+         ナビ/同期/解錠/テーマ UI は無し。プレイヤーは操作ボタンと進捗
+         インジケータを CSS で隠し、読み込み時の先頭の連を表示する。 -->
+    <main class="deck" data-component="PrintDeck">
+      <section class="stage" data-each="@visible" data-key="index">
+        <article class="slide" data-component="Slide">
+          <div class="slide-body" data-attr-data-layout="@layout">
+            <div class="slide-regions" data-each="@region_list" data-key="n">
+              <div class="slide-region slide-html" data-unsafe-html="html"></div>
+            </div>
+          </div>
+
+          <div class="player" data-show="@has_player">
+            <div class="player-stage">
+              <div class="controls">
+                <button data-ref="play" type="button" data-on-click="play">再生する</button>
+                <button data-ref="pause" type="button" data-on-click="pause">止める</button>
+                <button data-ref="reset" type="button" data-on-click="reset">最初に戻る</button>
+              </div>
+              <div class="poem" data-each="@stanzas" data-key="id">
+                <div class="stanza" data-class="{ active: active }" data-each="lines" data-key="n">
+                  <p class="stanza-line" data-text="text"></p>
+                </div>
+              </div>
+            </div>
+            <div class="progress" data-ref="progress">
+              <div class="progress-played" data-ref="progress_played"></div>
+            </div>
+            <audio data-ref="audio" crossorigin="anonymous">
+              <track data-ref="track" kind="metadata" default />
+            </audio>
+          </div>
+
+          <p data-ref="error" class="error" hidden></p>
+
+          <aside class="notes" data-show="@has_notes">
+            <div class="notes-body" data-text="@notes"></div>
+          </aside>
+        </article>
+      </section>
+    </main>
+
+    <p id="boot-error" class="error" hidden></p>
+
+    <script type="module" src="../src/main.js"></script>
+  </body>
+</html>

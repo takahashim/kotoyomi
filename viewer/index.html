@@ -1,0 +1,87 @@
+<!DOCTYPE html>
+<html lang="ja">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Kotoyomi スライドビューア</title>
+    <link rel="stylesheet" href="../app.css" />
+    <!-- 描画前の既定テーマ(FOUC 防止)。実際のテーマは Markdown frontmatter の
+         theme: で指定し、deck 起動時に <html data-theme> を上書きする。 -->
+    <script>
+      document.documentElement.dataset.theme = "default";
+    </script>
+  </head>
+  <body>
+    <main class="deck" data-component="SlideDeck">
+      <!-- 音声解錠バナー。デッキに音声があり未解錠のとき最初のページで出す。
+           クリック(= user gesture)で以後の再生が autoplay policy を通る。 -->
+      <div class="audio-unlock" data-show="@show_unlock">
+        <button type="button" data-on-click="unlock_audio">
+          🔊 このスライドには音声があります。クリックして再生を有効化
+        </button>
+      </div>
+
+      <!-- 現在スライドのみ data-each で mount。index を進めると keyed
+           reconciler が前スライドを unmount する。data-component と data-each
+           は同要素禁止なので stage(each)と article(component)を分ける。 -->
+      <section class="stage" data-each="@visible" data-key="index">
+        <!-- props(index/html/layout/regions/notes/audio/vtt)は item から auto-fill。 -->
+        <article class="slide" data-component="Slide">
+          <!-- 本文。@layout を data-layout に載せ(cover/section/two-column…)、
+               @region_list を領域(slide-region)として並べる。配置は CSS が
+               data-layout で決めるので、レイアウト追加は CSS だけで済む。 -->
+          <div class="slide-body" data-attr-data-layout="@layout">
+            <div class="slide-regions" data-each="@region_list" data-key="n">
+              <div class="slide-region slide-html" data-unsafe-html="html"></div>
+            </div>
+          </div>
+
+          <!-- プレイヤー領域: @vtt があるスライドだけ表示。 -->
+          <div class="player" data-show="@has_player">
+            <!-- 縦長ステージ: 左に操作ボタン(縦並び)、右に縦書きの詩。 -->
+            <div class="player-stage">
+              <!-- ネイティブ controls は隠し、操作は自前ボタンに集約。画面左に縦並び。 -->
+              <div class="controls">
+                <button data-ref="play" type="button" data-on-click="play">再生する</button>
+                <button data-ref="pause" type="button" data-on-click="pause">止める</button>
+                <button data-ref="reset" type="button" data-on-click="reset">最初に戻る</button>
+              </div>
+              <!-- 詩: 縦書き。1列に最大 24 文字が収まる大きさで縦いっぱいに表示。 -->
+              <div class="poem" data-each="@stanzas" data-key="id">
+                <div class="stanza" data-class="{ active: active }" data-each="lines" data-key="n">
+                  <p class="stanza-line" data-text="text"></p>
+                </div>
+              </div>
+            </div>
+            <!-- 自前の進捗バー(再生済み=色付き / 未再生=淡色)。塗り幅は
+                 Ruby 側 effect が set_style で更新。クリックでシークできる。 -->
+            <div class="progress" data-ref="progress">
+              <div class="progress-played" data-ref="progress_played"></div>
+            </div>
+            <audio data-ref="audio" crossorigin="anonymous">
+              <track data-ref="track" kind="metadata" default />
+            </audio>
+          </div>
+
+          <p data-ref="error" class="error" hidden></p>
+
+          <!-- 発表者ノート。ノートがある時だけ存在し、n キーで <html> に付く
+               show-notes クラスのときだけ CSS で表示される。 -->
+          <aside class="notes" data-show="@has_notes">
+            <div class="notes-body" data-text="@notes"></div>
+          </aside>
+        </article>
+      </section>
+
+      <nav class="deck-nav">
+        <button data-ref="prev" type="button" data-on-click="go_prev" data-attr-disabled="@at_start" aria-label="前のスライド">←</button>
+        <span class="counter" data-text="@counter"></span>
+        <button data-ref="next" type="button" data-on-click="go_next" data-attr-disabled="@at_end" aria-label="次のスライド">→</button>
+      </nav>
+    </main>
+
+    <p id="boot-error" class="error" hidden></p>
+
+    <script type="module" src="../src/main.js"></script>
+  </body>
+</html>

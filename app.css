@@ -1,57 +1,412 @@
+/* =======================================================================
+   テーマトークン
+
+   見た目はすべて CSS 変数で表現し、<html data-theme="..."> を切り替えると
+   通常スライド・プレイヤースライド・ナビまで一括で変わる。
+   data-theme は Markdown frontmatter の theme: を deck 起動時に適用する
+   (lib/deck.rb の Kotoyomi::Theme)。画面での切り替え UI は無し。
+   ======================================================================= */
+
+:root,
+[data-theme="minimal"] {
+  --bg: #eef1f5;
+  --surface: #ffffff;
+  --ink: #1a1d23;
+  --muted: #6b7280;
+  --accent: #2563eb;
+  --accent-ink: #ffffff;
+  --border: #e3e7ee;
+  --shadow: 0 10px 30px rgba(20, 30, 60, 0.08);
+  --code-bg: #f1f3f7;
+
+  --font-body: "Hiragino Kaku Gothic ProN", "Yu Gothic", "Segoe UI", system-ui, sans-serif;
+  --font-head: var(--font-body);
+  --head-weight: 600;
+  --head-spacing: -0.01em;
+  --h1-size: clamp(2.4rem, 5vw, 4rem);
+  --slide-radius: 16px;
+}
+
+[data-theme="dark"] {
+  --bg: #0e1014;
+  --surface: #171b22;
+  --ink: #e9edf2;
+  --muted: #97a0ad;
+  --accent: #4cc2ff;
+  --accent-ink: #07151e;
+  --border: #28303c;
+  --shadow: 0 12px 36px rgba(0, 0, 0, 0.55);
+  --code-bg: #21272f;
+}
+
+[data-theme="default"] {
+  --bg: #e7ebf1;
+  --surface: #fbfcfe;
+  --ink: #0d1117;
+  --muted: #54607a;
+  --accent: #ff4d5e;
+  --accent-ink: #ffffff;
+  --border: #d8dfe9;
+  --shadow: 0 18px 44px rgba(20, 30, 60, 0.14);
+  --code-bg: #eef1f6;
+
+  --font-body: "Helvetica Neue", "Hiragino Kaku Gothic ProN", "Yu Gothic", system-ui, sans-serif;
+  --head-weight: 800;
+  --head-spacing: -0.03em;
+  --h1-size: clamp(2rem, 5.0vw, 4rem);
+}
+
+/* =======================================================================
+   ベース
+   ======================================================================= */
+
 html,
 body {
   margin: 0;
   padding: 0;
-  background: #faf7f2;
-  color: #222;
-  font-family: "Hiragino Mincho ProN", "Yu Mincho", serif;
+  background: var(--bg);
+  color: var(--ink);
+  font-family: var(--font-body);
+  transition: background 0.3s ease, color 0.3s ease;
 }
 
-.app {
+.error {
+  color: #b00020;
+  background: #fff0f0;
+  border: 1px solid #f3c5c5;
+  padding: 0.75rem 1rem;
+  margin: 0;
+  white-space: pre-wrap;
+}
+
+/* Lilac の data-show / data-hide が付け外しする予約クラス。 */
+.lil-hidden {
+  display: none !important;
+}
+
+[hidden] {
+  display: none;
+}
+
+/* ネイティブ controls は隠す(操作は自前ボタン + 進捗バー)。 */
+audio {
+  display: none;
+}
+
+/* =======================================================================
+   スライドビューア (deck)
+   ======================================================================= */
+
+.deck {
+  display: flex;
+  flex-direction: column;
+  min-height: 100vh;
+  box-sizing: border-box;
+  /* 画面下部に固定された .deck-nav の帯を確保し、スライド本文 (特に
+     <audio> のシークバー) がナビの下に潜り込んで再生ヘッドが隠れるのを防ぐ。 */
+  padding-bottom: 2.5rem;
+}
+
+.stage {
+  flex: 1;
+  display: flex;
+  min-height: 0;
+  padding: clamp(1rem, 3vh, 2rem) clamp(1rem, 4vw, 2rem);
+  box-sizing: border-box;
+}
+
+/* スライド = 背景の上に乗る 1 枚のカード。
+   通常スライドは上寄せ(h1 が常に画面上部の決まった位置に来る)。
+   表紙・章扉は下の :has() で縦中央寄せに上書きする。 */
+.slide {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  justify-content: flex-start;
+  gap: 1.25rem;
+  padding: clamp(1rem, 5vw, 2rem);
+  box-sizing: border-box;
+  background: var(--surface);
+  color: var(--ink);
+  border: 1px solid var(--border);
+  border-radius: var(--slide-radius);
+  box-shadow: var(--shadow);
+  overflow: auto;
+  transition: background 0.3s ease, color 0.3s ease, border-color 0.3s ease;
+}
+
+/* 表紙・章扉・小扉だけ縦中央寄せ(safe: 内容が高いときは上端から並べて切れを防ぐ)。 */
+.slide:has(.slide-body[data-layout="cover"]),
+.slide:has(.slide-body[data-layout="section"]),
+.slide:has(.slide-body[data-layout="subsection"]) {
+  justify-content: safe center;
+}
+
+/* =======================================================================
+   レイアウト
+
+   本文は .slide-body > .slide-regions > .slide-region(1領域=.slide-html)。
+   .slide-body[data-layout="…"] が配置を決める。新レイアウトの追加は基本
+   この CSS にブロックを足すだけ(rqslides / Ruby は触らない)。
+   ======================================================================= */
+
+.slide-body {
+  width: 100%;
+}
+
+/* 既定(単一領域・data-layout なし)は従来どおり 70rem 中央。 */
+
+/* 左右分割 / 3 分割: 領域を grid に並べ、各領域の 70rem 制限は外す。 */
+.slide-body[data-layout="two-column"] .slide-regions {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  column-gap: clamp(1.5rem, 4vw, 4rem);
+  row-gap: 0.15rem; /* h1 ヘッダ(行1)とカラム(行2)の縦間隔は狭く */
+  align-items: start;
+}
+
+.slide-body[data-layout="three-column"] .slide-regions {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  column-gap: clamp(1rem, 3vw, 3rem);
+  row-gap: 0.15rem; /* h1 ヘッダとカラムの縦間隔は狭く */
+  align-items: start;
+}
+
+.slide-body[data-layout="two-column"] .slide-region,
+.slide-body[data-layout="three-column"] .slide-region {
+  max-width: none;
+  margin: 0;
+}
+
+/* 先頭領域に h1(= スライドタイトル)があれば全カラム幅に広げ、上部の
+   見出しヘッダにする(カラムは次の行へ)。h1 が無ければ普通のカラムのまま。
+   作者は `# タイトル` を最初に書き、直後に `> [column]` で列を始める。 */
+.slide-body[data-layout="two-column"] .slide-regions > .slide-region:first-child:has(h1),
+.slide-body[data-layout="three-column"] .slide-regions > .slide-region:first-child:has(h1) {
+  grid-column: 1 / -1;
+}
+
+/* ヘッダ h1 の下マージンも詰めて、カラムとの間隔を狭くする。 */
+.slide-body[data-layout="two-column"] .slide-regions > .slide-region:first-child:has(h1) .slide-html h1,
+.slide-body[data-layout="three-column"] .slide-regions > .slide-region:first-child:has(h1) .slide-html h1 {
+    /*margin-bottom: 0.1em;*/
+    margin-bottom: 0;
+}
+
+/* 表紙・章扉・小扉: どれも中央寄せの大見出し(アクセントラインも中央)。
+   subsection は section と同じフォーマット。違うのは配色(背景)だけ(下記)。 */
+.slide-body[data-layout="cover"],
+.slide-body[data-layout="section"],
+.slide-body[data-layout="subsection"] {
+  display: flex;
+  justify-content: center;
+}
+
+.slide-body[data-layout="cover"] .slide-region,
+.slide-body[data-layout="section"] .slide-region,
+.slide-body[data-layout="subsection"] .slide-region {
+  width: 100%;
+  margin: 0 auto;
+  text-align: center;
+}
+
+.slide-body[data-layout="cover"] .slide-html h1::after,
+.slide-body[data-layout="section"] .slide-html h1::after,
+.slide-body[data-layout="subsection"] .slide-html h1::after {
+  display: none; /* アクセントライン不要 */
+}
+
+.slide-body[data-layout="cover"] .slide-html h1 {
+  font-size: clamp(3rem, 9vw, 7rem);
+}
+
+.slide-body[data-layout="section"] .slide-html h1,
+.slide-body[data-layout="subsection"] .slide-html h1 {
+  font-size: clamp(3rem, 9vw, 7rem);
+}
+
+.slide-body[data-layout="cover"] .slide-html p {
+  display: flex;
+  justify-content: right;
+  text-align: right;
+}
+
+
+/* 表紙・章扉のカード背景はテーマ(dark / default)ごとに別色にする。レイアウトは
+   .slide-body に付くので、カード全体 (.slide) を :has() で色付けする。 */
+[data-theme="dark"] .slide:has(.slide-body[data-layout="cover"]) {
+  background: #102733; /* 深い青緑 */
+}
+
+[data-theme="dark"] .slide:has(.slide-body[data-layout="section"]) {
+  background: #2a1d33; /* 深い紫 */
+}
+
+[data-theme="default"] .slide:has(.slide-body[data-layout="cover"]) {
+  background: #fff0f1; /* 淡い赤 */
+}
+
+[data-theme="default"] .slide:has(.slide-body[data-layout="section"]) {
+  background: #eef3ff; /* 淡い青 */
+}
+
+/* 小扉(subsection)= section と同じ整形・配色だけ別。section と区別できるよう
+   全テーマで背景を変える(minimal も薄く色を付ける)。 */
+.slide:has(.slide-body[data-layout="subsection"]) {
+  background: #eef2f8; /* minimal: 薄いグレー(section の白と区別) */
+}
+
+[data-theme="dark"] .slide:has(.slide-body[data-layout="subsection"]) {
+  background: #1f2e2a; /* 深い緑(section の紫と区別) */
+}
+
+[data-theme="default"] .slide:has(.slide-body[data-layout="subsection"]) {
+  background: #eefaf0; /* 淡い緑(section の青と区別) */
+}
+
+/* markdown 由来の本文 (data-unsafe-html) ─ プレゼン用タイポグラフィ */
+.slide-html {
+  width: 100%;
+  max-width: 70rem;
+  margin: 0 auto;
+}
+
+.slide-html h1 {
+  font-family: var(--font-head);
+  font-weight: var(--head-weight);
+  letter-spacing: var(--head-spacing);
+  font-size: var(--h1-size);
+  line-height: 1.12;
+  margin: 0 0 0.5em;
+}
+
+/* 見出し下のアクセントライン(タイトルらしさ) */
+.slide-html h1::after {
+  content: "";
+  display: block;
+  width: /*12.5em;*/ 100%;
+  max-width: 100%;
+  height: 0.18rem;
+  margin-top: 0.35em;
+  background: var(--accent);
+  border-radius: 2px;
+}
+
+.slide-html h2 {
+  font-family: var(--font-head);
+  font-weight: var(--head-weight);
+  letter-spacing: var(--head-spacing);
+  font-size: clamp(1.6rem, 3vw, 2.4rem);
+  line-height: 1.25;
+  margin: 0.8em 0 0.3em;
+  margin-block-start: 0.3em;
+}
+
+.slide-html p,
+.slide-html li {
+  font-size: clamp(1.15rem, 2vw, 1.6rem);
+  line-height: 1.7;
+}
+
+.slide-html ul,
+.slide-html ol {
+  margin-left: 1.4em;
+  padding-left: 0;
+}
+
+.slide-html li {
+  margin: 0.3em 0;
+}
+
+.slide-html li::marker {
+  color: var(--accent);
+}
+
+.slide-html a {
+  color: var(--accent);
+}
+
+.slide-html code {
+  font-family: ui-monospace, "SFMono-Regular", Menlo, monospace;
+  font-size: 0.85em;
+  background: var(--code-bg);
+  color: var(--accent);
+  padding: 0.1em 0.4em;
+  border-radius: 5px;
+}
+
+/* 大きな画像でもスライド(ページ)内に収める。幅は領域いっぱいまで、高さは
+   見出し・本文ぶんを残して画面/ページに収まる範囲に制限し、はみ出させない。 */
+.slide-html img {
+  display: block;
+  max-width: 100%;
+  max-height: 70vh;
+  height: auto;
+  margin: 0.5em auto;
+}
+
+/* =======================================================================
+   プレイヤー (詩の音声同期) ─ 縦書きは維持し、配色はテーマ追従
+   ======================================================================= */
+
+.player {
   display: flex;
   flex-direction: column;
   gap: 1rem;
-  padding: 1rem;
-  min-height: 100vh;
-  box-sizing: border-box;
+  flex: 1;
+  min-height: 0;
 }
 
-.poem-viewport {
-  height: 80vh;
+/* 縦長ステージ: 左=操作ボタン(縦並び)、右=縦書きの詩。詩を縦いっぱいに
+   伸ばすため、このステージが残り高さをすべて取る。 */
+.player-stage {
   display: flex;
-  align-items: flex-start;
-  justify-content: center;
-  padding-top: 2rem;
-  box-sizing: border-box;
-  background: #fffdf8;
-  border: 1px solid #e6e0d4;
-  overflow: hidden;
+  flex-direction: row;
+  align-items: stretch;
+  gap: 1.5rem;
+  flex: 1;
+  min-height: 0;
 }
 
 .poem {
+  flex: 1 1 auto;
+  min-height: 0;
+  /* .poem 自身を size コンテナにし、子 (.stanza) で 100cqh を参照して
+     「縦 1 列 = コンテナ高さ = 22 文字」になる font-size を与える。 */
+  container-type: size;
   writing-mode: vertical-rl;
   text-orientation: mixed;
-  line-height: 2.2;
-  font-size: 28px;
-  letter-spacing: 0.08em;
+  line-height: 1.7; /* 縦書きでは列(行)の幅。詰めすぎず広げすぎず。 */
+  font-family: "Hiragino Mincho ProN", "Yu Mincho", serif; /* 詩は明朝体 */
+  font-weight: 400; /* 太くしない */
+  font-size: clamp(20px, 3vw, 30px); /* cqh 非対応ブラウザ用フォールバック */
+  color: var(--ink);
   display: flex;
-  align-items: center;
-  justify-content: center;
+  align-items: center; /* 列(行)の集まりを左右中央に */
+  justify-content: flex-start; /* 詩を上端に詰める(天つき) */
 }
 
 .stanza {
   display: none;
   margin: 0;
   text-align: center;
+  /* 縦 22 文字でコンテナ高さいっぱいに。CJK は 1 文字 ≒ 1em 送りなので
+     22 文字 ≒ 22em = 100cqh となる font-size を与える。 */
+  font-size: calc(100cqh / 22);
+  letter-spacing: 0; /* 22 文字ぴったり収めるため字間は空けない */
 }
 
 .stanza.active {
   display: flex;
-  flex-direction: row;
-  align-items: center;
+  /* writing-mode: vertical-rl 下では flex の主軸はこうなる:
+       row    → インライン軸 = 上→下(行が下に積まれてしまう)
+       column → ブロック軸   = 右→左(縦書き本来の段送り)
+     各行 (.stanza-line) を右から左へ並べたいので column。 */
+  flex-direction: column;
+  align-items: flex-start; /* 各行の上端を揃える(天つき) */
   gap: 0.4em;
-  font-weight: 600;
-  animation: stanza-fade-in 2.0s ease-out;
+  animation: stanza-fade-in 2s ease-out;
 }
 
 @keyframes stanza-fade-in {
@@ -67,39 +422,432 @@ body {
   margin: 0;
 }
 
-audio {
+/* 自前の再生進捗バー(再生済み / 未再生 を 2 色で塗り分け) */
+.progress {
   width: 100%;
+  height: 8px;
+  background: var(--border); /* 未再生 */
+  border-radius: 4px;
+  overflow: hidden;
+  cursor: pointer; /* クリックでシーク */
+}
+
+.progress-played {
+  height: 100%;
+  width: 0;
+  background: var(--accent); /* 再生済み */
+  border-radius: 4px;
+  transition: width 0.1s linear;
 }
 
 .controls {
   display: flex;
-  justify-content: center;
+  flex-direction: column; /* ボタンは画面左に縦並び */
+  justify-content: center; /* 詩の高さに対して縦中央 */
+  align-self: center;
+  gap: 0.75rem;
+  flex: 0 0 auto;
 }
 
 .controls button {
   font: inherit;
   padding: 0.5rem 1.25rem;
-  border: 1px solid #c8bfae;
-  background: #fffdf8;
-  color: #222;
-  border-radius: 4px;
+  border: 1px solid var(--border);
+  background: var(--surface);
+  color: var(--ink);
+  border-radius: 8px;
   cursor: pointer;
-  transition: background 0.15s ease;
+  transition: background 0.15s ease, color 0.15s ease, border-color 0.15s ease;
 }
 
 .controls button:hover {
-  background: #f3eddf;
+  background: var(--accent);
+  color: var(--accent-ink);
+  border-color: var(--accent);
 }
 
 .controls button:active {
-  background: #e8dfca;
+  opacity: 0.85;
 }
 
-.error {
-  color: #b00020;
-  background: #fff0f0;
-  border: 1px solid #f3c5c5;
-  padding: 0.75rem 1rem;
-  margin: 0;
+/* =======================================================================
+   発表者ノート(presenter notes)
+
+   既定は非表示。deck の n キーが <html> に show-notes を付け外しし、
+   ノートがある(@has_notes)スライドだけ枠が出る。data-show="@has_notes"
+   が付ける .lil-hidden は !important で勝つので、ノートが無い時は
+   show-notes 中でも出ない。
+   ======================================================================= */
+
+.notes {
+  display: none;
+}
+
+html.show-notes .notes {
+  display: block;
+  margin-top: 1rem;
+  padding: 1rem clamp(2rem, 6vw, 6rem) 0;
+  border-top: 2px dashed var(--border);
+}
+
+.notes-body {
+  max-width: 70rem;
+  margin: 0 auto;
   white-space: pre-wrap;
+  font-family: var(--font-body);
+  font-size: 1rem;
+  line-height: 1.6;
+  color: var(--muted);
+}
+
+/* =======================================================================
+   ナビゲーションバー
+   ======================================================================= */
+
+.deck-nav {
+  position: fixed;
+  bottom: 1rem;
+  left: 50%;
+  transform: translateX(-50%);
+  display: flex;
+  gap: 1rem;
+  align-items: center;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  padding: 0.4rem 1rem;
+  box-shadow: var(--shadow);
+}
+
+.deck-nav button {
+  font: inherit;
+  font-size: 1.2rem;
+  line-height: 1;
+  padding: 0.3rem 0.8rem;
+  border: 1px solid var(--border);
+  background: var(--surface);
+  color: var(--ink);
+  border-radius: 999px;
+  cursor: pointer;
+  transition: background 0.15s ease, color 0.15s ease;
+}
+
+.deck-nav button:hover:not(:disabled) {
+  background: var(--accent);
+  color: var(--accent-ink);
+  border-color: var(--accent);
+}
+
+.deck-nav button:disabled {
+  opacity: 0.4;
+  cursor: default;
+}
+
+.counter {
+  font-variant-numeric: tabular-nums;
+  min-width: 4rem;
+  text-align: center;
+  color: var(--muted);
+}
+
+/* =======================================================================
+   音声解錠バナー(最初のページ・未解錠時のみ)
+   ======================================================================= */
+
+.audio-unlock {
+  position: fixed;
+  top: 1rem;
+  left: 50%;
+  transform: translateX(-50%);
+  z-index: 60;
+}
+
+.audio-unlock button {
+  font: inherit;
+  font-size: 1rem;
+  padding: 0.6rem 1.3rem;
+  border: none;
+  border-radius: 999px;
+  background: var(--accent);
+  color: var(--accent-ink);
+  box-shadow: var(--shadow);
+  cursor: pointer;
+}
+
+.audio-unlock button:hover {
+  opacity: 0.9;
+}
+
+/* =======================================================================
+   発表者ビュー(presenter.html / PresenterDeck)
+
+   手元(ノート PC)用。現在スライド + 続くページ + ノートを並べ、投影
+   ビューと BroadcastChannel で同期する。プレビューはスライド html を
+   そのまま縮小表示(タイポグラフィだけ小さく上書き)。
+   ======================================================================= */
+
+.presenter {
+  display: flex;
+  flex-direction: column;
+  gap: 1rem;
+  min-height: 100vh;
+  padding: 1rem;
+  box-sizing: border-box;
+  background: var(--bg);
+  color: var(--ink);
+}
+
+.presenter-bar {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 1rem;
+}
+
+.presenter-bar button {
+  font: inherit;
+  font-size: 1.2rem;
+  line-height: 1;
+  padding: 0.3rem 0.9rem;
+  border: 1px solid var(--border);
+  background: var(--surface);
+  color: var(--ink);
+  border-radius: 999px;
+  cursor: pointer;
+}
+
+.presenter-grid {
+  display: grid;
+  grid-template-columns: 2fr 1fr;
+  gap: 1rem;
+  flex: 1;
+  min-height: 0;
+}
+
+.presenter-current,
+.presenter-next {
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+}
+
+.presenter-label {
+  margin: 0 0 0.4rem;
+  font-size: 0.8rem;
+  font-weight: 600;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--muted);
+}
+
+/* プレビュー = スライドカードの縮小版。 */
+.preview {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  box-shadow: var(--shadow);
+  padding: 1.25rem 1.5rem;
+  overflow: hidden;
+}
+
+.preview-current {
+  flex: 1;
+  min-height: 0;
+  overflow: auto;
+}
+
+/* 発表者の再生リモコン(詩スライド時のみ)。投影側の再生を操作し、
+   インジケータは投影側から届く位置を表示する。 */
+.presenter-player {
+  display: flex;
+  flex-direction: column;
+  gap: 0.6rem;
+  margin-top: 0.75rem;
+}
+
+/* 共有の .controls は投影側では縦並びだが、ここでは横並びにする。 */
+.presenter-player .controls {
+  flex-direction: row;
+  justify-content: center;
+  align-self: stretch;
+}
+
+.preview-list {
+  display: flex;
+  flex-direction: column;
+  gap: 0.75rem;
+  overflow: auto;
+  min-height: 0;
+}
+
+.preview-small {
+  display: flex;
+  gap: 0.75rem;
+  align-items: flex-start;
+  padding: 0.75rem 1rem;
+}
+
+.preview-num {
+  flex: 0 0 auto;
+  font-variant-numeric: tabular-nums;
+  font-weight: 700;
+  color: var(--accent);
+  min-width: 1.5em;
+}
+
+.preview-body {
+  min-width: 0;
+}
+
+/* プレビュー内のタイポグラフィは小さく固定(本番の clamp/vw は大きすぎる)。 */
+.preview .slide-html h1 {
+  font-size: 1.5rem;
+  line-height: 1.2;
+  margin: 0 0 0.3em;
+}
+
+.preview .slide-html h1::after {
+  display: none; /* サムネではアクセントライン不要 */
+}
+
+.preview .slide-html h2 {
+  font-size: 1.1rem;
+  margin: 0.4em 0 0.2em;
+}
+
+.preview .slide-html p,
+.preview .slide-html li {
+  font-size: 0.9rem;
+  line-height: 1.4;
+}
+
+.preview-current .slide-html h1 {
+  font-size: 2.2rem;
+}
+
+.preview-current .slide-html p,
+.preview-current .slide-html li {
+  font-size: 1.1rem;
+}
+
+.preview-small .slide-html h1 {
+  font-size: 1.15rem;
+}
+
+.preview-small .slide-html h2,
+.preview-small .slide-html p,
+.preview-small .slide-html li {
+  font-size: 0.85rem;
+}
+
+.presenter-notes {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  padding: 0.75rem 1.25rem 1rem;
+  max-height: 30vh;
+  min-height: 5;
+  overflow: auto;
+}
+
+.presenter-notes .notes-body {
+  color: var(--ink);
+  max-width: none;
+  margin: 0;
+}
+
+/* =======================================================================
+   印刷 / PDF(make pdf = viewer/print.html をヘッドレス Chrome で印刷)
+
+   1 スライド = 1 ページ。画面 UI(ナビ / 解錠 / テーマ)と、プレイヤーの
+   操作ボタン・進捗インジケータは PDF では出さない。プレイヤーは読み込み時の
+   先頭の連がそのまま載る。テーマの背景色は print-color-adjust で保持する。
+   この規則は index.html を Cmd-P したときの「現在スライド 1 枚印刷」にも効く。
+   ======================================================================= */
+
+@media print {
+  @page {
+    size: landscape;
+    margin: 0;
+  }
+
+  /* テーマの背景色・文字色を PDF に反映する。 */
+  *,
+  *::before,
+  *::after {
+    -webkit-print-color-adjust: exact;
+    print-color-adjust: exact;
+  }
+
+  html,
+  body {
+    background: var(--bg);
+  }
+
+  .deck {
+    display: block;
+    min-height: 0;
+    padding: 0;
+  }
+
+  /* data-each は子テンプレを繰り返すので .stage は 1 個。その中に全 .slide
+     (article)が並ぶ。ページ区切りは各 .slide に付ける。 */
+  .stage {
+    display: block;
+    padding: 0;
+    height: auto;
+    min-height: 0;
+  }
+
+  /* 1 スライド = 1 ページ。min-height でページを満たし、break-inside: avoid で
+     1 枚が 2 ページに割れるのを防ぎ、break-after: page で次スライドを次ページへ。 */
+  .slide {
+    min-height: 100vh;
+    border: none;
+    border-radius: 0;
+    box-shadow: none;
+    overflow: hidden;
+    break-inside: avoid;
+    break-after: page;
+    page-break-after: always; /* 後方互換 */
+  }
+
+  .stage > .slide:last-child {
+    break-after: auto;
+    page-break-after: auto;
+  }
+
+  /* 画面用 UI と、再生操作・進捗インジケータは PDF では非表示。 */
+  .deck-nav,
+  .audio-unlock,
+  .controls,
+  .progress,
+  .notes {
+    display: none !important;
+  }
+
+  /* プレイヤー(詩)を PDF に表示する。
+     画面では font-size を 100cqh(コンテナ高さ)基準にしているが、印刷レイアウト
+     ではコンテナ高さが確定せず 0 になり文字が消える。印刷では cqh をやめて固定
+     サイズにし、最初の連だけを縦書きで載せる(静的な資料用)。 */
+  .poem {
+    container-type: normal;
+    height: auto;
+    overflow: visible;
+  }
+
+  /* 最初の連だけ表示(再生中の active 依存にせず確実に先頭を出す)。 */
+  .stanza {
+    display: none !important;
+  }
+
+  .poem .stanza:first-child {
+    display: flex !important;
+    flex-direction: column;
+    align-items: flex-start;
+    gap: 0.4em;
+    font-size: 1.1rem; /* cqh をやめ固定サイズに */
+    letter-spacing: 0;
+    animation: none;
+  }
 }

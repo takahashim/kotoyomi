@@ -1,0 +1,66 @@
+<!DOCTYPE html>
+<html lang="ja">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Kotoyomi 発表者ビュー</title>
+    <link rel="stylesheet" href="../app.css" />
+    <!-- 描画前の既定テーマ(FOUC 防止)。実際は frontmatter の theme: が
+         deck 起動時に上書きする。 -->
+    <script>
+      document.documentElement.dataset.theme = "default";
+    </script>
+  </head>
+  <body>
+    <!-- 発表者ビュー: 現在スライド + 続くページ + ノート。投影ビュー
+         (index.html)と BroadcastChannel で @index を同期する。
+         同一ブラウザの別ウィンドウで開くこと(別アプリのブラウザ間は不可)。 -->
+    <main class="presenter" data-component="PresenterDeck">
+      <header class="presenter-bar">
+        <button type="button" data-on-click="go_prev" aria-label="前のスライド">←</button>
+        <span class="counter" data-text="@counter"></span>
+        <button type="button" data-on-click="go_next" aria-label="次のスライド">→</button>
+      </header>
+
+      <div class="presenter-grid">
+        <section class="presenter-current">
+          <h2 class="presenter-label">現在</h2>
+          <div class="preview preview-current slide-html" data-unsafe-html="@current_html"></div>
+
+          <!-- 詩(プレイヤー)スライドのときだけ。投影側の再生を操作し、
+               進捗インジケータは投影側から受け取った位置を表示する。 -->
+          <div class="presenter-player" data-show="@has_player">
+            <div class="progress" data-ref="progress">
+              <div class="progress-played" data-ref="progress_played"></div>
+            </div>
+            <div class="controls">
+              <button type="button" data-on-click="play">再生する</button>
+              <button type="button" data-on-click="pause">止める</button>
+              <button type="button" data-on-click="reset">最初に戻る</button>
+            </div>
+          </div>
+        </section>
+
+        <section class="presenter-next">
+          <h2 class="presenter-label">続くページ</h2>
+          <!-- @upcoming = [{ n, num, html }, ...]。data-each が子を繰り返す。 -->
+          <div class="preview-list" data-each="@upcoming" data-key="n">
+            <div class="preview preview-small">
+              <span class="preview-num" data-text="num"></span>
+              <div class="preview-body slide-html" data-unsafe-html="html"></div>
+            </div>
+          </div>
+        </section>
+      </div>
+
+      <section class="presenter-notes">
+        <h2 class="presenter-label">発表者ノート</h2>
+        <div class="notes-body" data-text="@notes"></div>
+      </section>
+    </main>
+
+    <p id="boot-error" class="error" hidden></p>
+
+    <script type="module" src="../src/main.js"></script>
+  </body>
+</html>
