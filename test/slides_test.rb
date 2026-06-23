@@ -6,13 +6,14 @@ require_relative "../lib/slides"
 
 class SlidesParseTest < Minitest::Test
   DATA = {
-    "metadata" => { "title" => "Demo", "total_slides" => 3 },
+    "metadata" => { "title" => "Demo", "total_slides" => 3, "reading_direction" => "vertical" },
     "slides" => [
       { "index" => 0, "title" => "Intro", "html" => "<h1>Intro</h1>",
         "layout" => nil, "speaker_notes" => nil, "dynamic" => false, "player" => nil },
       { "index" => 1, "title" => "Sakura", "html" => "<h1>Sakura</h1>",
         "layout" => nil, "speaker_notes" => nil, "dynamic" => false,
-        "player" => { "audio" => "poems/sakura.mp3", "vtt" => "WEBVTT\n\n00:00.000 --> 00:00.500\nあさ\n" } },
+        "player" => { "audio" => "poems/sakura.mp3", "vtt" => "WEBVTT\n\n00:00.000 --> 00:00.500\nあさ\n",
+                      "reading_direction" => "horizontal" } },
       { "index" => 2, "title" => "比較", "html" => "<h2>左</h2><h2>右</h2>",
         "layout" => "two-column", "regions" => ["<h2>左</h2>", "<h2>右</h2>"],
         "speaker_notes" => "ここで対比を強調", "dynamic" => false, "player" => nil },
@@ -58,8 +59,16 @@ class SlidesParseTest < Minitest::Test
     assert_equal ["<h2>左</h2>", "<h2>右</h2>"], parts
   end
 
+  def test_reading_direction_vtt_overrides_frontmatter_default
+    # 非プレイヤー/指定なし → frontmatter の既定(vertical)
+    assert_equal "vertical", @rows[0]["reading_direction"]
+    # vtt フェンスの指定があればそれが優先
+    assert_equal "horizontal", @rows[1]["reading_direction"]
+  end
+
   def test_keys_are_strings_for_data_each
-    assert_equal %w[index title html layout regions notes audio vtt].sort, @rows[0].keys.sort
+    assert_equal %w[index title html layout regions notes audio vtt reading_direction].sort,
+                 @rows[0].keys.sort
   end
 
   def test_handles_empty_and_nil

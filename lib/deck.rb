@@ -164,7 +164,9 @@ module Kotoyomi
       Theme.apply(data["metadata"])
       @index = signal(0)
 
-      @current_html = computed { slide_html(@index.value) }
+      # 現在スライドを通常ビューと同じ配置(layout + 領域)で見せる。
+      @current_layout = computed { current_slide["layout"] }
+      @current_regions = computed { region_list(@index.value) }
       @notes = computed { notes_for(@index.value) }
 
       # 続くページ。各 region 連結ではなく html 全体(サムネ用)。
@@ -222,9 +224,24 @@ module Kotoyomi
       @progress.value = data[:value].to_f if data[:kind].to_s == "progress"
     end
 
+    def current_slide
+      @slides.value[@index.value] || {}
+    end
+
     def slide_html(i)
       slide = @slides.value[i]
       slide ? slide["html"].to_s : ""
+    end
+
+    # スライドの "regions"(REGION_SEP 連結文字列)を data-each 用の領域配列へ。
+    # Slide#@region_list と同じ展開を任意 index に対して行う。
+    def region_list(i)
+      slide = @slides.value[i]
+      return [] unless slide
+
+      slide["regions"].to_s.split(Slides::REGION_SEP, -1).each_with_index.map do |html, n|
+        { "n" => n, "html" => html }
+      end
     end
 
     def notes_for(i)

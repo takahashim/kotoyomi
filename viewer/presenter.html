@@ -25,7 +25,15 @@
       <div class="presenter-grid">
         <section class="presenter-current">
           <h2 class="presenter-label">現在</h2>
-          <div class="preview preview-current slide-html" data-unsafe-html="@current_html"></div>
+          <!-- 通常ビューと同じ .slide-body 構造で配置(layout / 領域)。CSS の
+               .slide-body[data-layout=…] と .preview のタイポ縮小が両方効く。 -->
+          <div class="preview preview-current">
+            <div class="slide-body" data-attr-data-layout="@current_layout">
+              <div class="slide-regions" data-each="@current_regions" data-key="n">
+                <div class="slide-region slide-html" data-unsafe-html="html"></div>
+              </div>
+            </div>
+          </div>
 
           <!-- 詩(プレイヤー)スライドのときだけ。投影側の再生を操作し、
                進捗インジケータは投影側から受け取った位置を表示する。 -->

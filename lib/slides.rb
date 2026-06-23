@@ -26,6 +26,8 @@ module Kotoyomi
     #            "audio"|nil,"vtt"|nil }, ...]
     def self.parse(data)
       list = (data && data["slides"]) || []
+      meta = (data && data["metadata"]) || {}
+      default_reading = meta["reading_direction"]
       list.map do |slide|
         player = slide["player"]
         {
@@ -37,6 +39,8 @@ module Kotoyomi
           "notes"   => slide["speaker_notes"],
           "audio"   => player && player["audio"],
           "vtt"     => player && player["vtt"],
+          # 縦書き/横書き。vtt フェンスの指定が優先、無ければ frontmatter の既定。
+          "reading_direction" => (player && player["reading_direction"]) || default_reading,
         }
       end
     end

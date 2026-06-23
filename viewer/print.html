@@ -30,7 +30,7 @@
                 <button data-ref="pause" type="button" data-on-click="pause">止める</button>
                 <button data-ref="reset" type="button" data-on-click="reset">最初に戻る</button>
               </div>
-              <div class="poem" data-each="@stanzas" data-key="id">
+              <div class="poem" data-each="@stanzas" data-key="id" data-attr-data-reading-direction="@reading_direction">
                 <div class="stanza" data-class="{ active: active }" data-each="lines" data-key="n">
                   <p class="stanza-line" data-text="text"></p>
                 </div>
