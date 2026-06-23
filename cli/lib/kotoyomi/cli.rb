@@ -6,7 +6,6 @@
 
 require "red_quilt"
 require "optparse"
-require "fileutils"
 
 require_relative "cli/version"
 require_relative "cli/slide"
@@ -15,7 +14,13 @@ require_relative "cli/assets"
 require_relative "cli/renderer/base"
 require_relative "cli/renderer/html"
 require_relative "cli/renderer/json"
+require_relative "cli/converter"
 require_relative "cli/generator"
+require_relative "cli/reload_server"
+require_relative "cli/project"
+require_relative "cli/file_watcher"
+require_relative "cli/project_builder"
+require_relative "cli/serve_command"
 
 module Kotoyomi
   class CLI
@@ -32,7 +37,7 @@ module Kotoyomi
       format: :html,
       auto_title: false,
       title: nil,
-      # nil = unspecified. The "en" fallback is applied last in lang_for so we
+      # nil = unspecified. The "en" fallback is applied last in Converter so we
       # can tell an explicit --lang apart (CLI takes precedence over frontmatter).
       lang: nil,
       output: nil,
@@ -47,13 +52,33 @@ module Kotoyomi
     # --watch polling interval (seconds). A naive mtime watch that adds no gems.
     WATCH_INTERVAL = 0.3
 
-    # プロジェクト操作のサブコマンド。これ以外で始まる引数は従来どおりの単発
-    # 変換モード(Markdown → stdout / -o)として扱う(repo の make build / spec 用)。
-    SUBCOMMANDS = %w[new build serve].freeze
+    # プロジェクト操作のサブコマンド→メソッド名マップ。これ以外で始まる引数は
+    # 従来どおりの単発変換モード(Markdown → stdout / -o)として扱う。
+    SUBCOMMAND_MAP = {
+      "new" => :cmd_new,
+      "build" => :cmd_build,
+      "serve" => :cmd_serve,
+      "upgrade" => :cmd_upgrade
+    }.freeze
+
+    # parse_options での早期終了(help / version / parse error)のシグナル。
+    # 制御フロー用なので Exception 継承(SystemExit と同じ理屈)─ 経路上の汎用
+    # rescue StandardError(例: rebuild)に飲まれず、捕捉は rescue Abort で名指す。
+    Abort = Class.new(Exception) do
+      attr_reader :code
+
+      def initialize(code)
+        @code = code
+        super(code.to_s)
+      end
+    end
 
     # 雛形(ランタイム一式)のコピー元。repo ルート / gem ルート(index.html /
     # app.css / src / lib / vendor/lilac / viewer/*.html がある場所)。
     TEMPLATE_ROOT = File.expand_path("../../..", __dir__)
+
+    # serve のポート。wsv が SERVE_PORT、ライブリロード SSE が +1(8001)。
+    SERVE_PORT = 8000
 
     def self.run(argv, stdin: $stdin, stdout: $stdout, stderr: $stderr)
       new(stdin: stdin, stdout: stdout, stderr: stderr).run(argv)
@@ -66,8 +91,8 @@ module Kotoyomi
     end
 
     def run(argv)
-      if SUBCOMMANDS.include?(argv.first)
-        send("cmd_#{argv.shift}", argv)
+      if (method = SUBCOMMAND_MAP[argv.first])
+        send(method, argv.drop(1))
       else
         run_legacy(argv)
       end
@@ -85,11 +110,11 @@ module Kotoyomi
         return 1
       end
 
-      code = Generator.new(target, template_root: TEMPLATE_ROOT,
-                                   stdout: stdout, stderr: stderr).generate
+      code = generator(target).generate
       return code unless code.zero?
 
-      build_project(File.expand_path(target))
+      project = Project.new(target)
+      builder(project).build
       stdout.puts <<~MSG
         kotoyomi: #{target} を作成しました
           cd #{target}
@@ -98,116 +123,57 @@ module Kotoyomi
       0
     end
 
-    # kotoyomi build [DIR] — deck/deck.md → public/viewer/slides.json(+ media 同期)。
+    # kotoyomi build [DIR] — src/deck.md → public/viewer/slides.json(+ assets 同期)。
     def cmd_build(argv)
-      build_project(project_root(argv))
+      builder(project_from(argv)).build
     end
 
-    # kotoyomi serve [DIR] [--no-watch] — public/ を wsv で配信する。既定では
-    # src/deck.md も監視し、変更時に再ビルド(ブラウザ側 hotreload.js が
-    # slides.json の変化を拾ってその場で再描画)。--no-watch で監視を止め配信のみ。
-    # wsv は子プロセス、監視ループは前面で回し Ctrl-C で両方停止。
+    # kotoyomi upgrade [DIR] — public/ のランタイム同梱物を最新の kotoyomi で更新。
+    # src/ と build 生成物は保持。kotoyomi 自体を更新したあとに実行する。
+    def cmd_upgrade(argv)
+      project = project_from(argv)
+      code = generator(project.root).upgrade
+      stdout.puts "kotoyomi: #{project.public_dir} のランタイムを更新しました" if code.zero?
+      code
+    end
+
+    # kotoyomi serve [DIR] [--no-watch] — public/ を wsv で配信(既定で src/deck.md
+    # を監視し変更時に再ビルド)。運用は ServeCommand に委譲する。
     def cmd_serve(argv)
       watch = !argv.delete("--no-watch")
-      root = project_root(argv)
-      public_dir = File.join(root, "public")
-      unless File.directory?(public_dir)
-        stderr.puts "kotoyomi: #{public_dir} がありません(プロジェクト直下で実行)"
-        return 1
-      end
-
-      deck = File.join(root, "src", "deck.md")
-      watching = watch && File.file?(deck)
-      build_project(root) if File.file?(deck) # 初回ビルド
-
-      begin
-        pid = spawn("wsv", public_dir)
-      rescue Errno::ENOENT
-        stderr.puts "kotoyomi: wsv が見つかりません(gem install wsv)"
-        return 1
-      end
-
-      stdout.puts "kotoyomi: serving #{public_dir} at http://127.0.0.1:8000/ (Ctrl-C to stop)"
-      stdout.puts "kotoyomi: watching #{deck}" if watching
-
-      begin
-        watching ? watch_loop(root) : Process.wait(pid)
-      rescue Interrupt
-        stdout.puts "\nkotoyomi: stopped"
-      ensure
-        terminate(pid)
-      end
-      0
+      project = project_from(argv)
+      ServeCommand.new(project, builder(project), watch: watch,
+                                                  stdout: stdout, stderr: stderr).run
     end
 
-    # src/deck.md の mtime を監視し、変わるたびに再ビルド(Ctrl-C で抜ける)。
-    def watch_loop(root)
-      deck = File.join(root, "src", "deck.md")
-      last = File.mtime(deck)
-      loop do
-        sleep(WATCH_INTERVAL)
-        mtime = File.mtime(deck)
-        next if mtime == last
-
-        last = mtime
-        build_project(root)
-      end
+    # 引数 DIR(なければカレント)から Project を組み立てる。
+    def project_from(argv)
+      Project.new(argv.first || Dir.pwd)
     end
 
-    def terminate(pid)
-      Process.kill("TERM", pid)
-      Process.wait(pid)
-    rescue Errno::ESRCH, Errno::ECHILD
-      nil
+    def generator(target)
+      Generator.new(target, template_root: TEMPLATE_ROOT, stdout: stdout, stderr: stderr)
     end
 
-    def project_root(argv)
-      argv.first ? File.expand_path(argv.first) : Dir.pwd
-    end
-
-    # src/deck.md → public/viewer/slides.json を生成し、src/assets を viewer へ同期。
-    def build_project(root)
-      deck = File.join(root, "src", "deck.md")
-      unless File.file?(deck)
-        stderr.puts "kotoyomi: #{deck} が見つかりません(kotoyomi new で作成、またはプロジェクト直下で実行)"
-        return 1
-      end
-
-      out = File.join(root, "public", "viewer", "slides.json")
-      FileUtils.mkdir_p(File.dirname(out))
-      File.write(out, build(File.read(deck), DEFAULTS.merge(format: :json)))
-      sync_assets(root)
-      stdout.puts "kotoyomi: built public/viewer/slides.json"
-      0
-    end
-
-    # src/assets/* を public/viewer/assets/ にコピー(画像 / VTT の audio="assets/…" 解決用)。
-    def sync_assets(root)
-      src = File.join(root, "src", "assets")
-      return unless File.directory?(src)
-
-      dst = File.join(root, "public", "viewer", "assets")
-      FileUtils.mkdir_p(dst)
-      Dir.children(src).each do |entry|
-        next if entry == ".gitkeep"
-
-        FileUtils.cp_r(File.join(src, entry), dst)
-      end
+    # プロジェクトビルドは常に JSON 出力。変換は Converter に丸ごと委譲する。
+    def builder(project)
+      ProjectBuilder.new(project, renderer: Converter.new(format: :json),
+                                  stdout: stdout, stderr: stderr)
     end
 
     # ---- 単発変換モード(従来) ------------------------------------------
 
     def run_legacy(argv)
       options = parse_options(argv)
-      return options if options.is_a?(Integer)
-
       return run_watch(argv, options) if options[:watch]
 
       source = read_source(argv)
       return 1 unless source
 
-      write_output(build(source, options), options[:output])
+      write_output(converter(options).call(source), options[:output])
       0
+    rescue Abort => e
+      e.code
     end
 
     attr_reader :stdin, :stdout, :stderr
@@ -237,23 +203,20 @@ module Kotoyomi
         end
         opts.on("-h", "--help", "Show this help") do
           stderr.puts opts
-          return 0
+          raise Abort.new(0)
         end
         opts.on("-v", "--version", "Show version") do
           stderr.puts "kotoyomi #{Kotoyomi::CLI::VERSION}"
-          return 0
+          raise Abort.new(0)
         end
       end
 
-      begin
-        parser.parse!(argv)
-      rescue OptionParser::ParseError => e
-        stderr.puts "kotoyomi: #{e.message}"
-        stderr.puts parser
-        return 1
-      end
-
+      parser.parse!(argv)
       options
+    rescue OptionParser::ParseError => e
+      stderr.puts "kotoyomi: #{e.message}"
+      stderr.puts parser
+      raise Abort.new(1)
     end
 
     def read_source(argv)
@@ -272,16 +235,10 @@ module Kotoyomi
       end
     end
 
-    # Render the document to the final output string. JSON gets a trailing
-    # newline so stdout/file output matches the historical `puts` behaviour.
-    # Frontmatter is parsed by red_quilt (`frontmatter: true`): it is stripped
-    # from the body and exposed via `doc.frontmatter` (Hash | nil).
-    def build(source, options)
-      doc = RedQuilt.parse(source, frontmatter: true)
-      case options[:format]
-      when :html then render_html(doc, options)
-      when :json then "#{render_json(doc, options)}\n"
-      end
+    # オプションから Converter を組み立てる(変換規則は Converter 側に集約)。
+    def converter(options)
+      Converter.new(format: options[:format], title: options[:title],
+                    auto_title: options[:auto_title], lang: options[:lang])
     end
 
     def write_output(output, path)
@@ -294,6 +251,8 @@ module Kotoyomi
 
     # Poll the input file's mtime and rebuild on change. Pure-Ruby (no extra
     # gem). Stops on Ctrl-C. Build errors are reported but don't stop watching.
+    # 別プロセスで配信(make serve = wsv)していてもブラウザへ reload を push
+    # できるよう、SSE サーバ(:SERVE_PORT+1)も立てて再ビルド時に通知する。
     def run_watch(argv, options)
       if argv.size != 1 || !File.file?(argv.first)
         stderr.puts "kotoyomi: --watch requires an existing input file"
@@ -304,62 +263,26 @@ module Kotoyomi
       target = options[:output] || "(stdout)"
       stderr.puts "kotoyomi: watching #{path} -> #{target} (Ctrl-C to stop)"
 
-      last = nil
-      loop do
-        mtime = File.mtime(path)
-        if mtime != last
-          last = mtime
+      reload = ReloadServer.new(SERVE_PORT + 1).start
+      rebuild(path, options) # 初回ビルド(以降は変更時のみ)
+      begin
+        FileWatcher.new(path, interval: WATCH_INTERVAL).each_change do
           rebuild(path, options)
+          reload&.notify
         end
-        sleep(WATCH_INTERVAL)
+      rescue Interrupt
+        stderr.puts "\nkotoyomi: stopped"
+      ensure
+        reload&.stop
       end
-    rescue Interrupt
-      stderr.puts "\nkotoyomi: stopped"
       0
     end
 
     def rebuild(path, options)
-      write_output(build(File.read(path), options), options[:output])
+      write_output(converter(options).call(File.read(path)), options[:output])
       stderr.puts "kotoyomi: built #{options[:output] || '(stdout)'} #{Time.now.strftime('%H:%M:%S')}"
     rescue StandardError => e
       stderr.puts "kotoyomi: build error: #{e.message}"
     end
-
-    def render_html(doc, options)
-      doc.to_slides(title: title_for(doc, options), lang: lang_for(doc, options))
-    end
-
-    def render_json(doc, options)
-      doc.to_slides_json(title: title_for(doc, options), lang: lang_for(doc, options))
-    end
-
-    # title / lang prefer the CLI option, then frontmatter, then a default.
-    # For title, --auto-title additionally supplies the first heading as the
-    # default when nothing else is set.
-    def title_for(doc, options)
-      front = doc.frontmatter || {}
-      title = options[:title] || front["title"]
-      title = doc.first_heading_text.to_s if title.nil? && options[:auto_title]
-      title.to_s
-    end
-
-    def lang_for(doc, options)
-      front = doc.frontmatter || {}
-      (options[:lang] || front["lang"] || front["language"] || DEFAULT_LANG).to_s
-    end
-
-    # Slide-rendering entry points mixed into RedQuilt::Document, so callers can
-    # write `doc.to_slides_json`. Kept as an explicit module for discoverability.
-    module DocumentSlides
-      def to_slides(title: nil, lang: "en")
-        Kotoyomi::CLI::Renderer::HTML.new(self, title: title.to_s, lang: lang.to_s).render
-      end
-
-      def to_slides_json(title: nil, lang: "en")
-        Kotoyomi::CLI::Renderer::JSON.new(self, title: title.to_s, lang: lang.to_s).render
-      end
-    end
   end
 end
-
-RedQuilt::Document.include(Kotoyomi::CLI::DocumentSlides)
