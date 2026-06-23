@@ -2,14 +2,14 @@
 
 source "https://rubygems.org"
 
-# ローカル動作確認用の静的ファイルサーバ。`bundle exec wsv` で起動。
-gem "wsv"
-gem "rubocop"
+# kotoyomi gem 本体(kotoyomi.gemspec)。`kotoyomi` 実行ファイルと依存(red_quilt /
+# wsv)はここから来る。`bundle exec kotoyomi …` が使えるのもこのため。
+gemspec
 
-# ビルド時 CLI(Kotoyomi::CLI = cli/)が Markdown を解析するのに使う。
-# red_quilt は隣のチェックアウトを参照(sibling 規約)。
+# red_quilt は開発中は隣のチェックアウトを使う(gemspec の依存を path で上書き)。
 gem "red_quilt", path: "../red_quilt"
 
-# テスト: ビルド CLI は rspec(spec/)、slides.json 取り込みは minitest(test/)。
+# 開発用。
+gem "rubocop"
 gem "rspec"
 gem "rake"

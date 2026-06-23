@@ -3,6 +3,13 @@ PATH
   specs:
     red_quilt (0.7.2)
 
+PATH
+  remote: .
+  specs:
+    kotoyomi (0.1.0)
+      red_quilt (>= 0.7.2)
+      wsv
+
 GEM
   remote: https://rubygems.org/
   specs:
@@ -51,18 +58,18 @@ GEM
     unicode-display_width (3.2.0)
       unicode-emoji (~> 4.1)
     unicode-emoji (4.2.0)
-    wsv (0.8.0)
+    wsv (0.12.0)
 
 PLATFORMS
   arm64-darwin-24
   ruby
 
 DEPENDENCIES
+  kotoyomi!
   rake
   red_quilt!
   rspec
   rubocop
-  wsv
 
 BUNDLED WITH
    2.6.2
