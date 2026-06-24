@@ -4,7 +4,7 @@
 # watch        : deck.md を監視して slides.json を再生成(ブラウザは自動で再描画)
 # serve        : ローカル静的サーバ (wsv)。viewer/ をブラウザで開く
 # pdf          : 全スライドを 1 ページずつ並べた PDF を書き出す (要 Google Chrome)
-# smoke        : ホストスモーク (happy-dom 上でデッキ/プレイヤーを検証)
+# smoke        : ホストスモーク (wasmtime-rb + Dommy/QuickJS でデッキ/プレイヤーを検証)
 # test         : Ruby テスト(rspec = ビルド CLI、minitest = slides.json 取り込み)
 # vendor-lilac : 隣の lilac チェックアウトをビルドして vendor/lilac/ を更新
 #
@@ -58,7 +58,8 @@ pdf: build
 	PDF="$(PDF)" bash bin/pdf.sh
 
 smoke:
-	npm run smoke
+	bundle exec ruby test/smoke/run_node.rb
+	bundle exec ruby test/smoke/run_presenter.rb
 
 spec:
 	bundle exec rspec
