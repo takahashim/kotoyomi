@@ -22,8 +22,9 @@ DECK      ?= examples/deck.md
 TITLE     ?= ことよみ Slides
 DECK_LANG ?= ja
 
-# vendor/lilac/ は隣の lilac チェックアウトの `make pages-pack` 成果物
-# (lilac.wasm + index.js + mruby-wasm-js ブリッジ一式) を丸ごと取り込んだもの。
+# vendor/lilac/ は Lilac の :full ランタイム(release wasm + mruby-wasm-js
+# ブリッジ)。lilac-wasm-bin gem の `Lilac::Wasm::Bin` パス解決経由で取り込む
+# (bin/vendor_lilac.rb)。隣チェックアウト利用時も release(約 0.8MB)を取得。
 # 未リリースの lilac を手元で試すとき = lilac 側を編集 → `make vendor-lilac`。
 #
 # 注意: lilac の Make ルールは mrblib (*.rb) の変更を依存に持たないため、
@@ -32,8 +33,7 @@ DECK_LANG ?= ja
 #   rm -f ../lilac/build/lilac-full.release.wasm
 #   rm -rf ../mruby-wasm-runtime/mruby/build/lilac-full-release
 # その後 `make vendor-lilac` で確実に取り込まれる。
-LILAC         ?= ../lilac
-LILAC_VERSION ?= vdev
+LILAC ?= ../lilac
 
 # PDF 出力先。`make pdf PDF=foo.pdf` で変更可。Chrome のパスは CHROME=... で上書き。
 PDF ?= kotoyomi.pdf
@@ -67,8 +67,6 @@ test: spec
 	ruby test/slides_test.rb
 
 vendor-lilac:
-	$(MAKE) -C $(LILAC) pages-pack VERSION=$(LILAC_VERSION)
-	rm -rf vendor/lilac
-	mkdir -p vendor/lilac
-	cp -R "$(LILAC)/dist-pages/$(LILAC_VERSION)/." vendor/lilac/
-	@echo "vendored lilac ($(LILAC_VERSION)) into vendor/lilac/ — run 'make smoke' to verify"
+	$(MAKE) -C $(LILAC) lilac-full-release
+	ruby -I"$(LILAC)/wasm-bin/lib" bin/vendor_lilac.rb
+	@echo "run 'make smoke' to verify"
