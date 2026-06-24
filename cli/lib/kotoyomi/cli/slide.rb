@@ -4,8 +4,8 @@ class Kotoyomi::CLI
   # A single slide's parsed structure. Built mutably by Partitioner (arrays are
   # appended to as nodes are scanned), then consumed read-only by the renderers.
   #
-  #   content_ids   : all content node ids (flattened)
-  #   regions       : content node ids grouped per region ([[id, ...], ...])
+  #   content_ids   : all content NodeRefs (flattened)
+  #   regions       : content NodeRefs grouped per region ([[ref, ...], ...])
   #   layout        : nil | String  (named layout: cover / section / two-column / ...)
   #   speaker_notes : nil | String
   #   dynamic       : bool
