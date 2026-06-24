@@ -1,16 +1,22 @@
-// kotoyomi スライドビューアのランタイム = Lilac (lilac.wasm) + ブリッジ
-// mruby-wasm-js。Lilac v0.1.0 の成果物を ../vendor/lilac/ に同梱している
-// (https://takahashim.github.io/lilac/v0.1.0/ と同一レイアウト・オフライン対応)。
+// kotoyomi スライドビューアのランタイム = Lilac (:full) + ブリッジ
+// mruby-wasm-js。ランタイムは lilac-wasm-bin gem 由来の release 成果物を
+// `make vendor-lilac` で ../vendor/lilac/ に同梱している(オフライン対応)。
+// レイアウトは vendor/lilac/{lilac.wasm, mruby-wasm-js/} で、createVM は
+// ブリッジ(mruby-wasm-js/index.js)から読む。
 //
 // このファイルは「最小のブートシム」だけを担う:
 //   1. createVM({ wasm }) で lilac.wasm を instantiate
 //   2. lib/*.rb を fetch して 1 ファイルずつ vm.eval(コンポーネント定義 + register)
 //   3. vm.eval("Lilac.start") で body を走査し data-component を mount
 //
+// ロード方式(2)はここ一箇所に閉じている。将来 :compiled(軽量化)へ移る
+// 場合の差し替え点はこの bootRuby():lilac-compiled.wasm を読み、fetch+eval
+// の代わりに事前コンパイルした .mrb を vm.loadBytecode する形にすればよい。
+//
 // slides.json の取得・パース等のアプリロジックは一切 JS では行わない
 // (Ruby 側 deck#setup が Fetchy.json で取得し Kotoyomi::Slides.parse で取り込む)。
 
-import { createVM } from "../vendor/lilac/index.js";
+import { createVM } from "../vendor/lilac/mruby-wasm-js/index.js";
 
 const RUBY_SOURCES = [
   "lib/bus.rb",
