@@ -2,22 +2,8 @@
 
 class Kotoyomi::CLI
   module Renderer
-    # RedQuilt::Renderer::HTML の内部 @out バッファに依存する操作を隔離。
-    # RedQuilt が public な fragment rendering API を提供したら置き換える。
-    module RedQuiltBufferSwap
-      def render_fragment(node_ids)
-        saved = @out
-        @out = +""
-        node_ids.each { |id| render_node(id) }
-        @out
-      ensure
-        @out = saved
-      end
-    end
-
     # Common base for the slide renderers.
     class Base < RedQuilt::Renderer::HTML
-      include RedQuiltBufferSwap
       def initialize(document, title: "", lang: "en")
         super(document)
         @title = title
