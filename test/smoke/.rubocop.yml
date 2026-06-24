@@ -1,0 +1,19 @@
+inherit_from: ../../.rubocop.yml
+
+# Smoke harnesses are standalone scripts (run directly via `make smoke`), ported
+# 1:1 from the old Node run-*.mjs. They use a couple of process globals for the
+# shared VM/engine, drive the deck with embedded JS-event strings, and `eval` JS
+# in the QuickJS world — patterns that are fine for a top-level test script.
+
+Style/GlobalVars:
+  Enabled: false
+Security/Eval:
+  Enabled: false
+Style/MutableConstant:
+  Enabled: false
+Naming/MethodParameterName:
+  Enabled: false
+Layout/LineLength:
+  Enabled: false
+Metrics:
+  Enabled: false
