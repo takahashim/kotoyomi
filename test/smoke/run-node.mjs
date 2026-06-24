@@ -63,7 +63,8 @@ const SLIDES_JSON = JSON.stringify({
     // No regions/layout → single-region fallback path.
     { index: 1, title: "Sakura", html: "<h1>Sakura</h1>",
       layout: null, speaker_notes: null, dynamic: false,
-      player: { audio: "media/sakura.mp3", vtt: "WEBVTT\n\n00:00.000 --> 00:01.500\nあさ\n" } },
+      player: { audio: "media/sakura.mp3", vtt: "WEBVTT\n\n00:00.000 --> 00:01.500\nあさ\n",
+                reading_direction: "horizontal" } },
   ],
 });
 
@@ -93,7 +94,7 @@ document.body.innerHTML = `
           </div>
         </div>
         <div class="player" data-show="@has_player">
-          <div class="poem" data-each="@stanzas" data-key="id">
+          <div class="poem" data-each="@stanzas" data-key="id" data-attr-data-reading-direction="@reading_direction">
             <div class="stanza" data-class="{ active: active }" data-each="lines" data-key="n">
               <p class="stanza-line" data-text="text"></p>
             </div>
@@ -126,7 +127,7 @@ document.body.innerHTML = `
 `;
 
 // --- Boot the real runtime -------------------------------------------------
-const { bootRuby } = await import("../src/ruby_runtime.js");
+const { bootRuby } = await import("../../src/ruby_runtime.js");
 await bootRuby();
 const tick = (ms = 30) => new Promise((r) => setTimeout(r, ms));
 await tick();
@@ -190,7 +191,8 @@ const active = qa(".stanza.active");
 check(stanzas.length === FAKE_CUES.length, `2 stanzas (got ${stanzas.length})`);
 check(lines.length === 5, `5 stanza lines (got ${lines.length})`);
 check(active.length === 1, `exactly one active stanza (got ${active.length})`);
-console.log("[ok] player slide renders cue→stanza with one active");
+check(q(".poem").getAttribute("data-reading-direction") === "horizontal", "poem reading_direction applied from vtt fence");
+console.log("[ok] player slide renders cue→stanza with one active (+reading_direction)");
 
 // Custom progress bar: a timeupdate should set the played width to
 // currentTime/duration (two-colour played/remaining line).
