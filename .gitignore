@@ -21,6 +21,10 @@
 # npm
 node_modules/
 
+# Generated project output (kotoyomi build/serve/upgrade populate public/ from
+# the bundled runtime + the deck). examples/ is the in-repo sample project.
+examples/public/
+
 # Windows
 Thumbs.db
 ehthumbs.db

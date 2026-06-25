@@ -1,8 +1,7 @@
 # ことよみ スライドビューア — ビルド/検証タスク。
 #
-# build        : Markdown デッキ → viewer/slides.json (ビルド CLI = cli/)
-# watch        : deck.md を監視して slides.json を再生成(ブラウザは自動で再描画)
-# serve        : ローカル静的サーバ (wsv)。viewer/ をブラウザで開く
+# build        : examples を kotoyomi build(src/deck.md → public/viewer/slides.json)
+# serve        : examples を kotoyomi serve(public/ 配信 + 監視 + 自動リロード)
 # pdf          : 全スライドを 1 ページずつ並べた PDF を書き出す (要 Google Chrome)
 # smoke        : ホストスモーク (wasmtime-rb + Dommy/QuickJS でデッキ/プレイヤーを検証)
 # test         : Ruby テスト(rspec = ビルド CLI、minitest = slides.json 取り込み)
@@ -11,16 +10,16 @@
 # ビルド CLI(Kotoyomi::CLI, MRI)は `cli/` に同梱。Markdown 解析に red_quilt を
 # 使うため `../red_quilt`(sibling)が必要。
 #
-# ライブリロード: 別ターミナルで `make serve` と `make watch` を起動し、
-# http://127.0.0.1:8000/viewer/ を開く。deck.md を保存するとビルド CLI が
-# slides.json を再生成し、ビューア(localhost のみ)が検知してその場で再描画する。
+# ライブリロード: `make serve` 一つで配信 + src/deck.md 監視 + 自動リロードまで
+# 担う(http://127.0.0.1:8000/viewer/)。deck.md を保存すると slides.json を再生成し、
+# ビューアがその場で再描画する。
 #
-# CI にはビルド環境(red_quilt)が無い前提なので viewer/slides.json と
-# viewer/media/ はコミットし、デッキを編集したら手元で `make build` して再生成する。
+# examples/ は kotoyomi の実サンプルプロジェクト(src/deck.md + 生成物 public/)。
+# make build / serve は kotoyomi build / serve に委譲する。public/ は生成物(gitignore)
+# なので、初回や clone 直後は make build / serve が雛形から自動展開する(runtime ターゲット)。
 
-DECK      ?= examples/deck.md
-TITLE     ?= ことよみ Slides
-DECK_LANG ?= ja
+# 操作対象の kotoyomi プロジェクト(src/deck.md + public/)。
+PROJECT ?= examples
 
 # vendor/lilac/ は Lilac の :full ランタイム(release wasm + mruby-wasm-js
 # ブリッジ)。lilac-wasm-bin gem の `Lilac::Wasm::Bin` パス解決経由で取り込む
@@ -38,24 +37,24 @@ LILAC ?= ../lilac
 # PDF 出力先。`make pdf PDF=foo.pdf` で変更可。Chrome のパスは CHROME=... で上書き。
 PDF ?= kotoyomi.pdf
 
-.PHONY: build watch serve pdf smoke test spec vendor-lilac
+.PHONY: build serve runtime pdf smoke test spec vendor-lilac
 
-build:
-	bundle exec exe/kotoyomi --format json \
-		--title "$(TITLE)" --lang $(DECK_LANG) \
-		-o viewer/slides.json "$(DECK)"
-	@echo "wrote viewer/slides.json from $(DECK)"
+build: runtime
+	bundle exec exe/kotoyomi build "$(PROJECT)"
 
-watch:
-	bundle exec exe/kotoyomi --format json --watch \
-		--title "$(TITLE)" --lang $(DECK_LANG) \
-		-o viewer/slides.json "$(DECK)"
+serve: runtime
+	bundle exec exe/kotoyomi serve "$(PROJECT)"
 
-serve:
-	bundle exec wsv
+# examples/public/ のランタイム(index.html / app.css / src / lib / vendor/lilac /
+# viewer/*.html)を雛形から展開する。public/ は生成物(gitignore)なので、初回や
+# clone 直後はこれで用意する。既にあれば何もしない。
+runtime:
+	@if [ ! -f "$(PROJECT)/public/index.html" ]; then \
+		mkdir -p "$(PROJECT)/public" && bundle exec exe/kotoyomi upgrade "$(PROJECT)"; \
+	fi
 
 pdf: build
-	PDF="$(PDF)" bash bin/pdf.sh
+	PDF="$(PDF)" PDF_ROOT="$(PROJECT)/public" bash bin/pdf.sh
 
 smoke:
 	bundle exec ruby test/smoke/run_node.rb

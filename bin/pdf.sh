@@ -23,8 +23,10 @@ if [ ! -x "$CHROME" ]; then
   exit 1
 fi
 
-# 静的サーバを起動し、終了時に必ず止める。
-bundle exec wsv -p "$PORT" >/dev/null 2>&1 &
+# 静的サーバを起動し、終了時に必ず止める。配信ルートはプロジェクトの public/
+# (kotoyomi build 済み。make pdf から PDF_ROOT で渡る)。
+SERVE_DIR="${PDF_ROOT:-examples/public}"
+bundle exec wsv -p "$PORT" "$SERVE_DIR" >/dev/null 2>&1 &
 SRV=$!
 trap 'kill "$SRV" 2>/dev/null || true' EXIT
 

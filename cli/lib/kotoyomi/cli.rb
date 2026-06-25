@@ -24,14 +24,29 @@ require_relative "cli/serve_command"
 
 module Kotoyomi
   class CLI
-    USAGE = <<~USAGE
-      Usage: kotoyomi [options] [file]
+    # `kotoyomi --help` の出力。プロジェクト操作のサブコマンドが公開インタフェース。
+    # 単発変換モード(run_legacy)は社内ツール/Makefile 用の低レベル退避路として
+    # 残してあるが、ここには載せない(USAGE バナーがパースエラー時にだけ見せる)。
+    HELP = <<~HELP
+      Usage: kotoyomi <command> [DIR] [options]
 
-      Reads Markdown from FILE (or stdin if FILE is omitted) and writes slides
-      to stdout (or to --output FILE).
+      Commands:
+        new DIR        Scaffold a project (src/ + public/) and run the first build
+        build [DIR]    Build src/deck.md -> public/viewer/slides.json (syncs assets)
+        serve [DIR]    Serve public/ and watch src/deck.md, rebuilding on change
+                       (--no-watch to disable); http://127.0.0.1:8000/
+        upgrade [DIR]  Refresh public/'s bundled runtime to the current kotoyomi
+                       (keeps src/ and built output)
 
-      Options:
-    USAGE
+      [DIR] defaults to the current directory.
+
+        -h, --help     Show this help
+        -v, --version  Show version
+    HELP
+
+    # OptionParser のバナー。単発変換モードのパースエラー時にだけ表示する
+    # (--help はサブコマンド中心の HELP を出すので、ここには現れない)。
+    USAGE = "Usage: kotoyomi [options] [FILE]\n"
 
     DEFAULTS = {
       format: :html,
@@ -202,7 +217,7 @@ module Kotoyomi
           options[:watch] = true
         end
         opts.on("-h", "--help", "Show this help") do
-          stderr.puts opts
+          stderr.puts HELP
           raise Abort.new(0)
         end
         opts.on("-v", "--version", "Show version") do
